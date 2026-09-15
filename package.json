@@ -2,6 +2,7 @@
   "name": "constellation-daily",
   "version": "1.0.0",
   "private": true,
+  "license": "MIT",
   "type": "module",
   "description": "每日星座 · 沉浸式静态星座运势网站",
   "scripts": {
