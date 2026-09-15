@@ -1,10 +1,22 @@
 <script setup>
 /**
  * 星座卡牌：栅格入场带错落延迟，悬停时上浮发光，点击即选择。
+ *
+ * 卡的形状由选择页的牌阵决定（固定 2:3，宽高都不由内容决定），
+ * 所以卡内排版一律用 em：字号是唯一的旋钮，由 `--picker-scale` 给出，
+ * 内容因此永远装得进卡里，不会出现"卡被压扁、文字被裁掉"。
+ * 卡小到盛不下全部五行时，引擎会把 `compact` 打开，英文名与元素那行先退场 ——
+ * 与其把字压到读不出来，不如少显示两行、让主要的几行更大。
  */
 const props = defineProps({
   sign: { type: Object, required: true },
   index: { type: Number, default: 0 },
+  /**
+   * 紧凑排版：卡矮到装不下五行时（手机竖屏的 3×4 牌阵），
+   * 英文名与"元素 / 属性"那行退场，把高度留给符号、星座名与日期区间。
+   * 由布局引擎判定：它同时决定字号基准，两者必须同源，不能各判一次。
+   */
+  compact: { type: Boolean, default: false },
 })
 
 const emit = defineEmits(['select'])
@@ -20,6 +32,7 @@ const cardStyle = {
   <button
     type="button"
     class="sign-card"
+    :class="{ 'sign-card--compact': compact }"
     :style="cardStyle"
     :aria-label="`选择 ${sign.name}`"
     @click="emit('select')"
@@ -27,7 +40,6 @@ const cardStyle = {
     <span class="sign-card__aura" aria-hidden="true"></span>
     <span class="sign-card__shine" aria-hidden="true"></span>
 
-    <span class="sign-card__index">{{ String(sign.index).padStart(2, '0') }}</span>
     <span class="sign-card__glyph">{{ sign.glyph }}</span>
     <span class="sign-card__name">{{ sign.name }}</span>
     <span class="sign-card__en">{{ sign.en }}</span>
@@ -48,10 +60,14 @@ const cardStyle = {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 5px;
+  gap: 0.33em;
   width: 100%;
-  padding: 22px 12px 18px;
-  border-radius: var(--radius-lg);
+  height: 100%;
+  /* 卡内唯一的基准：15px 是"自然尺寸"，--picker-scale 由布局引擎按卡高给出。
+     卡内不得再出现 vw —— 卡宽是卡高的副产品，跟视口宽度没有关系。 */
+  font-size: calc(15px * var(--picker-scale, 1));
+  padding: 1.47em 0.8em 1.2em;
+  border-radius: max(12px, 1.33em);
   border: 1px solid var(--line);
   background: linear-gradient(165deg, rgba(26, 31, 60, 0.78), rgba(10, 12, 26, 0.82));
   overflow: hidden;
@@ -79,16 +95,19 @@ const cardStyle = {
   top: -46%;
   left: 50%;
   z-index: -1;
-  width: 150%;
+  width: 156%;
   aspect-ratio: 1;
   transform: translateX(-50%);
+  /* 柔光直接由渐变本身给（多段衰减），不用 filter: blur()。
+     12 张卡各带一个 26px 模糊层，滚动时整块牌列每帧都要重新光栅化，
+     实测这是掉帧的第二来源；渐变只是一次插值，观感几乎一样。 */
   background: radial-gradient(
     circle,
-    color-mix(in srgb, var(--from) 62%, transparent),
-    transparent 62%
+    color-mix(in srgb, var(--from) 52%, transparent) 0%,
+    color-mix(in srgb, var(--from) 21%, transparent) 44%,
+    transparent 72%
   );
   opacity: 0.2;
-  filter: blur(26px);
   transition: opacity 0.6s var(--ease-out), transform 0.6s var(--ease-out);
 }
 
@@ -115,17 +134,8 @@ const cardStyle = {
   transform: translateX(120%);
 }
 
-.sign-card__index {
-  position: absolute;
-  top: 10px;
-  right: 12px;
-  font-size: 10.5px;
-  letter-spacing: 0.14em;
-  color: var(--ink-3);
-}
-
 .sign-card__glyph {
-  font-size: clamp(28px, 3.4vw, 36px);
+  font-size: 2.4em;
   line-height: 1.3;
   color: color-mix(in srgb, var(--from) 84%, #ffffff);
   text-shadow: 0 0 22px color-mix(in srgb, var(--from) 70%, transparent);
@@ -138,18 +148,20 @@ const cardStyle = {
 }
 
 .sign-card__name {
-  margin-top: 4px;
-  font-size: 14.5px;
+  margin-top: 0.27em;
+  font-size: 0.97em;
   font-weight: 600;
   letter-spacing: 0.1em;
   color: var(--ink-0);
+  white-space: nowrap;
 }
 
 .sign-card__en {
-  font-size: 10px;
+  font-size: 0.67em;
   letter-spacing: 0.24em;
   text-transform: uppercase;
   color: var(--ink-3);
+  white-space: nowrap;
   transition: color 0.4s var(--ease-out);
 }
 
@@ -158,20 +170,22 @@ const cardStyle = {
 }
 
 .sign-card__range {
-  margin-top: 6px;
-  font-size: 11.5px;
+  margin-top: 0.4em;
+  font-size: 0.77em;
   letter-spacing: 0.08em;
   color: var(--ink-2);
+  white-space: nowrap;
 }
 
 .sign-card__meta {
   display: inline-flex;
   align-items: center;
-  gap: 7px;
-  margin-top: 6px;
-  font-size: 10.5px;
+  gap: 0.47em;
+  margin-top: 0.4em;
+  font-size: 0.7em;
   color: var(--ink-3);
   letter-spacing: 0.1em;
+  white-space: nowrap;
 }
 
 .sign-card__meta em {
@@ -180,16 +194,15 @@ const cardStyle = {
 
 .sign-card__meta i {
   width: 1px;
-  height: 9px;
+  height: 0.86em;
   background: var(--line-strong);
 }
 
-@media (max-width: 560px) {
-  .sign-card {
-    padding: 16px 8px 14px;
-  }
-  .sign-card__range {
-    font-size: 10.5px;
-  }
+/* 紧凑卡：英文名与元素属性退场。
+   注意是"隐藏"而不是"缩小" —— 卡内一切的尺度都由 em 决定，
+   挤在卡里的行数少了，同一张卡才腾得下更大的字号（见 PICKER.refHCompact）。 */
+.sign-card--compact .sign-card__en,
+.sign-card--compact .sign-card__meta {
+  display: none;
 }
 </style>

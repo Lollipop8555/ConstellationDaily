@@ -5,21 +5,85 @@
  *  - guide  今日指引（幸运元素 + 宜忌 + 箴言）
  *  - traits 星座性格（关键词 + 核心/阴影/成长 + 洞察）
  */
-import { computed } from 'vue'
+import { computed, onBeforeUnmount, onMounted, nextTick, ref, watch } from 'vue'
 import ScoreRing from './ScoreRing.vue'
 
 const props = defineProps({
   card: { type: Object, required: true },
   sign: { type: Object, required: true },
+  /** 兜底：视口矮到任何卡宽都放不下内容时，允许卡牌内容内部滚动 */
+  scroll: { type: Boolean, default: false },
+  /** 长条卡：正文左右分栏（手机横屏等超扁比例） */
+  wide: { type: Boolean, default: false },
+  /** 环形图尺寸，由布局引擎按卡的实际形状给出 */
+  ringSize: { type: Number, default: 0 },
 })
 
 const starList = computed(() =>
   Array.from({ length: 5 }, (_, index) => index < props.card.stars),
 )
+const ring = computed(() => props.ringSize || 118)
+
+/**
+ * 长条卡的自校正缩放。
+ * 布局引擎能算准卡的外形，却算不准卡内文案 —— 星座简介、宜忌条目、箴言的长短
+ * 都随星座和日期变，而且"再收一档字号"会让段落少折一行、栏宽变化又会换一条折行，
+ * 是阶梯式的，没法用一个几何公式一次算对。
+ * 所以这里量一次真实内容：还溢出就把字号再收 2%，直到装下（下限 0.6，剩下的交给滚动兜底）。
+ */
+const FIT_MIN = 0.6
+const FIT_STEP = 0.02
+
+const rootEl = ref(null)
+
+function autoFit() {
+  const el = rootEl.value
+  const body = el && el.querySelector('.fcard__body')
+  if (!props.wide || !body) {
+    if (el) el.style.removeProperty('--fit')
+    return
+  }
+  // 每次都从 1 起测，避免上一次的收缩把这次的判断带偏
+  el.style.setProperty('--fit', '1')
+  let scale = 1
+  while (scale > FIT_MIN && body.scrollHeight > body.clientHeight + 0.5) {
+    scale = Math.max(FIT_MIN, Number((scale - FIT_STEP).toFixed(2)))
+    el.style.setProperty('--fit', String(scale))
+  }
+}
+
+let observer = null
+
+onMounted(() => {
+  autoFit()
+  // 视口变化会改卡的外形（进而改字号档位）与栏宽，两者都会影响折行，得重新量
+  if (typeof ResizeObserver !== 'undefined') {
+    observer = new ResizeObserver(autoFit)
+    observer.observe(rootEl.value)
+  }
+})
+
+onBeforeUnmount(() => {
+  if (observer) observer.disconnect()
+  observer = null
+})
+
+watch(
+  () => [props.wide, props.card, props.sign],
+  () => nextTick(autoFit),
+)
 </script>
 
 <template>
-  <article class="fcard" :class="[`fcard--${card.level}`, `fcard--${card.type}`]">
+  <article
+    ref="rootEl"
+    class="fcard"
+    :class="[
+      `fcard--${card.level}`,
+      `fcard--${card.type}`,
+      { 'is-scroll': scroll, 'is-wide': wide },
+    ]"
+  >
     <span class="fcard__corner" aria-hidden="true">{{ card.glyph }}</span>
     <span class="fcard__hairline" aria-hidden="true"></span>
 
@@ -38,7 +102,7 @@ const starList = computed(() =>
         :value="card.score"
         :tone="card.level"
         :label="card.name"
-        :size="118"
+        :size="ring"
         :stroke="7"
         :caption="`${card.name}指数`"
       />
@@ -57,7 +121,7 @@ const starList = computed(() =>
         :value="card.score"
         :tone="card.level"
         :label="card.name"
-        :size="112"
+        :size="ring"
         :stroke="7"
       />
 
@@ -75,8 +139,11 @@ const starList = computed(() =>
         </li>
       </ul>
 
-      <p class="fcard__text">{{ card.text }}</p>
-      <p v-if="card.note" class="fcard__note">{{ card.note }}</p>
+      <!-- 长条卡里整块成为独立一栏；常规卡里 display:contents 使其不参与布局 -->
+      <div class="overall-note">
+        <p class="fcard__text">{{ card.text }}</p>
+        <p v-if="card.note" class="fcard__note">{{ card.note }}</p>
+      </div>
     </div>
 
     <!-- 今日指引 -->
@@ -134,55 +201,60 @@ const starList = computed(() =>
 
     <!-- 星座档案 -->
     <div v-else-if="card.type === 'sign'" class="fcard__body fcard__body--sign">
-      <p class="sign-tagline">{{ sign.tagline }}</p>
-      <p class="sign-summary">{{ card.text }}</p>
+      <!-- 长条卡里两块各成一栏；常规卡里 display:contents 使其不参与布局 -->
+      <div class="sign-col sign-col--lead">
+        <p class="sign-tagline">{{ sign.tagline }}</p>
+        <p class="sign-summary">{{ card.text }}</p>
+      </div>
 
-      <ul class="sign-facts">
-        <li>
-          <span>日期</span>
-          <strong>{{ sign.range }}</strong>
-        </li>
-        <li>
-          <span>元素</span>
-          <strong>{{ sign.element }}象 · {{ sign.quality }}</strong>
-        </li>
-        <li>
-          <span>守护星</span>
-          <strong>{{ sign.ruler }}</strong>
-        </li>
-        <li>
-          <span>象征物</span>
-          <strong>{{ sign.symbolName }}</strong>
-        </li>
-        <li>
-          <span>原型</span>
-          <strong>{{ sign.archetype }}</strong>
-        </li>
-        <li>
-          <span>幸运色</span>
-          <strong class="sign-facts__colors">
-            <i
-              v-for="color in sign.colors"
-              :key="color.name"
-              :style="{ background: color.hex }"
-              :title="color.name"
-            ></i>
-            {{ sign.colors.map((color) => color.name).join(' / ') }}
-          </strong>
-        </li>
-        <li>
-          <span>幸运数字</span>
-          <strong>{{ sign.numbers.join(' · ') }}</strong>
-        </li>
-        <li>
-          <span>幸运日</span>
-          <strong>{{ sign.days.join(' / ') }}</strong>
-        </li>
-      </ul>
+      <div class="sign-col sign-col--facts">
+        <ul class="sign-facts">
+          <li>
+            <span>日期</span>
+            <strong>{{ sign.range }}</strong>
+          </li>
+          <li>
+            <span>元素</span>
+            <strong>{{ sign.element }}象 · {{ sign.quality }}</strong>
+          </li>
+          <li>
+            <span>守护星</span>
+            <strong>{{ sign.ruler }}</strong>
+          </li>
+          <li>
+            <span>象征物</span>
+            <strong>{{ sign.symbolName }}</strong>
+          </li>
+          <li>
+            <span>原型</span>
+            <strong>{{ sign.archetype }}</strong>
+          </li>
+          <li>
+            <span>幸运色</span>
+            <strong class="sign-facts__colors">
+              <i
+                v-for="color in sign.colors"
+                :key="color.name"
+                :style="{ background: color.hex }"
+                :title="color.name"
+              ></i>
+              {{ sign.colors.map((color) => color.name).join(' / ') }}
+            </strong>
+          </li>
+          <li>
+            <span>幸运数字</span>
+            <strong>{{ sign.numbers.join(' · ') }}</strong>
+          </li>
+          <li>
+            <span>幸运日</span>
+            <strong>{{ sign.days.join(' / ') }}</strong>
+          </li>
+        </ul>
 
-      <p class="trait-keywords">
-        <span v-for="keyword in sign.keywords" :key="keyword">{{ keyword }}</span>
-      </p>
+        <p class="trait-keywords">
+          <span v-for="keyword in sign.keywords" :key="keyword">{{ keyword }}</span>
+        </p>
+      </div>
     </div>
 
     <!-- 性格特质（单条） -->
@@ -200,12 +272,20 @@ const starList = computed(() =>
 
 <style scoped>
 .fcard {
+  /* 卡内一切尺寸都从 --card-scale 来（1 = 参考卡宽 560px）。
+     用"下限 + 随卡宽增长"的插值，而不是媒体查询：
+     窗口很宽但很矮时卡可能只有 350px 宽，媒体查询按视口判断会完全失效。 */
+  --cs: var(--card-scale, 1);
+  --card-pad-y: calc(20px + 4px * var(--cs));
+  --card-pad-x: calc(16px + 6px * var(--cs));
+  --card-gap: calc(13px + 3px * var(--cs));
   position: relative;
   display: flex;
   flex-direction: column;
-  gap: 16px;
-  height: 100%;
-  padding: 24px 22px 20px;
+  gap: var(--card-gap);
+  /* 卡牌高度由布局引擎算好（同屏所有卡牌尺寸一致），不再随内容伸缩 */
+  height: var(--card-h, 100%);
+  padding: var(--card-pad-y) var(--card-pad-x) calc(var(--card-pad-y) - 4px);
   border-radius: var(--radius-xl);
   border: 1px solid var(--line);
   background:
@@ -250,7 +330,7 @@ const starList = computed(() =>
   position: absolute;
   right: 16px;
   bottom: 12px;
-  font-size: 74px;
+  font-size: calc(56px + 18px * var(--cs));
   line-height: 1;
   color: rgba(255, 255, 255, 0.035);
   pointer-events: none;
@@ -331,6 +411,24 @@ const starList = computed(() =>
   display: flex;
   flex-direction: column;
   gap: 16px;
+}
+
+/* 兜底：屏幕矮到任何卡宽都放不下时，只有卡牌正文滚动，页头与页脚保持可见 */
+.fcard.is-scroll .fcard__body {
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(150, 165, 225, 0.35) transparent;
+}
+
+.fcard.is-scroll .fcard__body::-webkit-scrollbar {
+  width: 5px;
+}
+
+.fcard.is-scroll .fcard__body::-webkit-scrollbar-thumb {
+  border-radius: 99px;
+  background: rgba(150, 165, 225, 0.35);
 }
 
 .fcard__body--score {
@@ -451,7 +549,8 @@ const starList = computed(() =>
 
 .guide-motto {
   font-family: var(--font-serif);
-  font-size: clamp(15px, 2.1vw, 18px);
+  /* 跟随卡宽，不跟随视口 */
+  font-size: clamp(15px, calc(14px + 4px * var(--cs)), 18px);
   line-height: 1.9;
   color: #f6e9c8;
   text-align: center;
@@ -652,7 +751,7 @@ const starList = computed(() =>
 
 .trait-text {
   font-family: var(--font-serif);
-  font-size: 15px;
+  font-size: clamp(14px, calc(13px + 2px * var(--cs)), 15px);
   line-height: 2.1;
   letter-spacing: 0.05em;
   color: #efe3c6;
@@ -669,16 +768,265 @@ const starList = computed(() =>
   letter-spacing: 0.16em;
 }
 
-@media (max-width: 400px) {
-  .fcard {
-    gap: 14px;
-    padding: 20px 16px 16px;
-  }
-  .fcard__corner {
-    font-size: 56px;
-  }
-  .trait-text {
-    font-size: 14px;
-  }
+/* ---------------- 长条卡（手机横屏等超扁比例）：正文左右分栏 ---------------- */
+
+.fcard.is-wide {
+  /* 横条更矮，留白收紧，把高度全留给内容 */
+  --card-pad-y: 10px;
+  --card-pad-x: 18px;
+  --card-gap: 9px;
+  /* 字号缩放 = 引擎按卡高给的起手值 × 组件量完真实内容后的自校正系数 */
+  --ws: calc(var(--wide-scale, 1) * var(--fit, 1));
 }
+
+/* 分栏容器：常规卡里"透明"（子项照旧直接参与正文的竖排），
+   长条卡里各自成为独立一栏 —— grid 的行是两栏共享的，
+   只有把一栏包成单个网格项，栏与栏的高度才真正互不干扰。 */
+.sign-col,
+.overall-note {
+  display: contents;
+}
+
+.fcard.is-wide .sign-col,
+.fcard.is-wide .overall-note {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  gap: 8px;
+}
+
+.fcard.is-wide .fcard__head {
+  gap: 10px;
+}
+
+.fcard.is-wide .fcard__glyph {
+  width: 30px;
+  height: 30px;
+  border-radius: 9px;
+  font-size: 14px;
+}
+
+.fcard.is-wide .fcard__titles h3 {
+  font-size: calc(15px * var(--ws));
+}
+
+/* 长条卡里所有正文都按 --ws 收一档：卡越矮，字越紧 */
+.fcard.is-wide .fcard__text {
+  font-size: calc(14px * var(--ws));
+  line-height: 1.75;
+}
+
+.fcard.is-wide .fcard__note {
+  font-size: calc(12.5px * var(--ws));
+  line-height: 1.7;
+}
+
+.fcard.is-wide .dim-bars__name {
+  font-size: calc(11.5px * var(--ws));
+}
+
+.fcard.is-wide .dim-bars__score {
+  font-size: calc(12px * var(--ws));
+}
+
+.fcard.is-wide .score-stars {
+  font-size: calc(14px * var(--ws));
+}
+
+.fcard.is-wide .fcard__corner {
+  bottom: 6px;
+  font-size: 62px;
+}
+
+.fcard.is-wide .fcard__foot {
+  padding-top: 8px;
+}
+
+/* 所有版式的正文统一改成两栏网格：左栏放"图"，右栏放"文"。
+   safe center：装得下就垂直居中，装不下时退化为顶端对齐，
+   而不是把内容顶出卡片上沿（那样顶部会没救）。 */
+.fcard.is-wide .fcard__body {
+  display: grid;
+  align-content: safe center;
+  overflow-y: auto;
+  gap: 6px 20px;
+}
+
+/* 维度运势：左环右文 */
+.fcard.is-wide .fcard__body--score {
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  text-align: left;
+}
+
+.fcard.is-wide .score-detail {
+  align-items: flex-start;
+  gap: 8px;
+}
+
+/* 今日总览：横条下拆成"环 | 速览条 | 解读"三段并列，解读不再叠在速览条下面 */
+.fcard.is-wide .fcard__body--overall {
+  grid-template-columns: auto minmax(0, 0.86fr) minmax(0, 1.14fr);
+  align-items: center;
+  gap: 0 18px;
+}
+
+.fcard.is-wide .fcard__body--overall > .ring {
+  grid-column: 1;
+}
+
+.fcard.is-wide .fcard__body--overall > .dim-bars {
+  grid-column: 2;
+  gap: 7px;
+}
+
+.fcard.is-wide .fcard__body--overall > .overall-note {
+  grid-column: 3;
+}
+
+/* 今日指引：左栏箴言 + 幸运元素，右栏宜忌 */
+.fcard.is-wide .fcard__body--guide {
+  grid-template-columns: minmax(0, 1.08fr) minmax(0, 0.92fr);
+  gap: 8px 18px;
+}
+
+.fcard.is-wide .fcard__body--guide > .guide-motto {
+  grid-column: 1;
+  grid-row: 1;
+  text-align: left;
+  font-size: calc(17px * var(--ws));
+  line-height: 1.7;
+}
+
+.fcard.is-wide .fcard__body--guide > .lucky-grid {
+  grid-column: 1;
+  grid-row: 2;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+/* 横条下"标签 / 值"改成同一行：比上下叠放矮一半，也省掉值的折行 */
+.fcard.is-wide .lucky-item {
+  flex-direction: row;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 5px 10px;
+}
+
+/* 标签绝不能被值挤扁：标签一旦被迫收窄就会逐字折行，
+   一个"幸运时段"能把整行撑到 98px（实测），比什么都伤高度 */
+.fcard.is-wide .lucky-item__label {
+  flex-shrink: 0;
+  font-size: calc(11.5px * var(--ws));
+}
+
+.fcard.is-wide .lucky-item__value {
+  font-size: calc(13px * var(--ws));
+}
+
+/* 值偏长的两条（幸运时段 / 贵人星座）在窄栏里一行放不下，
+   让它们独占整行，否则又会被挤成两行 */
+.fcard.is-wide .lucky-item--wide {
+  grid-column: 1 / -1;
+}
+
+.fcard.is-wide .fcard__body--guide > .do-avoid {
+  grid-column: 2;
+  grid-row: 1 / 3;
+  align-content: start;
+}
+
+.fcard.is-wide .do-avoid__col {
+  padding: 9px 12px;
+}
+
+.fcard.is-wide .do-avoid__col h4 {
+  margin-bottom: 5px;
+  font-size: calc(12px * var(--ws));
+}
+
+.fcard.is-wide .do-avoid__col li {
+  font-size: calc(11.5px * var(--ws));
+  line-height: 1.75;
+}
+
+/* 星座档案：左栏标语 + 简介，右栏档案表（表内再分两列）。
+   右栏要宽一点：档案项是"标签 + 值"的横排，太窄会让值换行把表撑高。 */
+.fcard.is-wide .fcard__body--sign {
+  grid-template-columns: minmax(0, 0.5fr) minmax(0, 1fr);
+  align-items: center;
+  gap: 0 20px;
+}
+
+/* 简介是散文，栏窄一点只是多折两行；档案表是"标签 + 值"的横排，
+   栏一窄就会换行，整张表变高——所以宽度优先给右栏。 */
+.fcard.is-wide .sign-summary {
+  font-size: calc(12px * var(--ws));
+  line-height: 1.7;
+}
+
+.fcard.is-wide .sign-tagline {
+  font-size: calc(14px * var(--ws));
+}
+
+.fcard.is-wide .fcard__body--sign > .sign-col--lead {
+  grid-column: 1;
+}
+
+.fcard.is-wide .fcard__body--sign > .sign-col--facts {
+  grid-column: 2;
+}
+
+.fcard.is-wide .sign-tagline,
+.fcard.is-wide .sign-summary {
+  text-align: left;
+}
+
+.fcard.is-wide .sign-facts span {
+  font-size: calc(11px * var(--ws));
+}
+
+.fcard.is-wide .sign-facts strong {
+  font-size: calc(12.5px * var(--ws));
+}
+
+.fcard.is-wide .trait-keywords span {
+  font-size: calc(11.5px * var(--ws));
+}
+
+.fcard.is-wide .sign-facts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-rows: repeat(4, auto);
+  grid-auto-flow: column;
+  align-content: start;
+  gap: 0 16px;
+  border-top: 0;
+}
+
+.fcard.is-wide .sign-facts li {
+  padding: 3px 0;
+}
+
+.fcard.is-wide .trait-keywords {
+  margin-top: 0;
+}
+
+/* 性格特质：左标签右正文 */
+.fcard.is-wide .fcard__body--trait {
+  grid-template-columns: minmax(0, 0.42fr) minmax(0, 1.58fr);
+  align-items: center;
+  gap: 10px 20px;
+  text-align: left;
+}
+
+.fcard.is-wide .fcard__body--trait > .trait-em {
+  grid-column: 1;
+  justify-self: start;
+}
+
+.fcard.is-wide .fcard__body--trait > .trait-text {
+  grid-column: 2;
+}
+
 </style>

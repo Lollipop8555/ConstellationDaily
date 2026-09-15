@@ -1,19 +1,29 @@
 <script setup>
 /**
- * 塔罗式堆叠牌组
- * - 卡牌宽度固定为窄卡，同一牌堆内所有卡牌尺寸完全一致
- * - 排列方式随屏幕宽度切换：
- *     · 窄屏（< 1040px）：向下方错落堆叠
- *     · 宽屏（>= 1040px）：向左右两侧扇形展开
+ * 塔罗式牌组
+ * - 卡牌尺寸完全一致，全部由布局引擎按视口算出（宽、高、舞台宽来自 CSS 变量）
+ * - 排列方式随可用空间切换：
+ *     · 横向有富余（展开模式）：向左右两侧扇形展开
+ *     · 否则（收起模式）：在同一位置左右轻微错开地堆叠
  * - 切换方式：点击卡牌 / 左右滑动 / 左右方向键 / 指示点
  */
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import FortuneCard from './FortuneCard.vue'
+import { useLayoutContext } from '../core/layoutContext.js'
 
 const props = defineProps({
   cards: { type: Array, required: true },
   sign: { type: Object, required: true },
 })
+
+const layout = useLayoutContext()
+/** 空间够就展开成扇形，不够就收起堆叠——由布局引擎判定 */
+const mode = computed(() => (layout && layout.value ? layout.value.deck.mode : 'stack'))
+const scroll = computed(() => (layout && layout.value ? layout.value.deck.scroll : false))
+const showHint = computed(() => (layout && layout.value ? layout.value.hint : false))
+/** 超扁比例下引擎会给出长条卡：正文左右分栏，避免退化成卡内滚动 */
+const wide = computed(() => (layout && layout.value ? !!layout.value.deck.wide : false))
+const ringSize = computed(() => (layout && layout.value ? layout.value.deck.ring : 0))
 
 /** 两种排列方式下的逐层位移（depth 从 0 起，0 为最前面的当前卡） */
 const PRESETS = {
@@ -21,33 +31,35 @@ const PRESETS = {
   // 不缩放，位移即露出的宽度，x 控制在 13px 内——加上 transform-origin: center
   // 旋转带来的约 3px 外扩，仍留在视口两侧的留白里，不会出现横向滚动。
   stack: [
-    { x: 0, y: 0, r: 0, s: 1, o: 1, z: 50 },
-    { x: 6, y: 0, r: 0.5, s: 1, o: 0.85, z: 40 },
-    { x: -8, y: 0, r: -0.5, s: 1, o: 0.62, z: 30 },
-    { x: 11, y: 0, r: 0.5, s: 1, o: 0.4, z: 20 },
-    { x: -13, y: 0, r: -0.5, s: 1, o: 0.22, z: 10 },
+    { x: '0px', y: '0px', r: 0, s: 1, o: 1, z: 50 },
+    { x: '6px', y: '0px', r: 0.5, s: 1, o: 0.85, z: 40 },
+    { x: '-8px', y: '0px', r: -0.5, s: 1, o: 0.62, z: 30 },
+    { x: '11px', y: '0px', r: 0.5, s: 1, o: 0.4, z: 20 },
+    { x: '-13px', y: '0px', r: -0.5, s: 1, o: 0.22, z: 10 },
   ],
+  // 宽屏扇形：位移全部按卡宽派生成 CSS 变量（见 .deck__stage--fan），
+  // 这样大屏把卡放宽后，扇面同步撑开，不会溢出容器或与卡牌打架。
   fan: [
-    { x: 0, y: 0, r: 0, s: 1, o: 1, z: 50 },
-    { x: 92, y: 12, r: 4.2, s: 0.955, o: 0.68, z: 40 },
-    { x: -92, y: 12, r: -4.2, s: 0.955, o: 0.68, z: 39 },
-    { x: 168, y: 26, r: 8, s: 0.91, o: 0.38, z: 30 },
-    { x: -168, y: 26, r: -8, s: 0.91, o: 0.38, z: 29 },
-    { x: 230, y: 40, r: 11.6, s: 0.87, o: 0, z: 20 },
+    { x: '0px', y: '0px', r: 0, s: 1, o: 1, z: 50 },
+    { x: 'var(--fan-x1)', y: 'var(--fan-y1)', r: 4.2, s: 0.955, o: 0.68, z: 40 },
+    { x: 'calc(var(--fan-x1) * -1)', y: 'var(--fan-y1)', r: -4.2, s: 0.955, o: 0.68, z: 39 },
+    { x: 'var(--fan-x2)', y: 'var(--fan-y2)', r: 8, s: 0.91, o: 0.38, z: 30 },
+    { x: 'calc(var(--fan-x2) * -1)', y: 'var(--fan-y2)', r: -8, s: 0.91, o: 0.38, z: 29 },
+    // 末层只是"没有更多卡了"的占位：与前一层同几何且完全透明。
+    // 若继续按更远的位移铺开，宽卡时会把扇面撑出容器，产生横向滚动。
+    { x: 'var(--fan-x2)', y: 'var(--fan-y2)', r: 8, s: 0.91, o: 0, z: 20 },
   ],
 }
 
-const wide = ref(false)
 const active = ref(0)
 const dragging = ref(false)
 const dragDelta = ref(0)
 const dotsEl = ref(null)
 
-let mql = null
 let startX = null
 
 const total = computed(() => props.cards.length)
-const preset = computed(() => (wide.value ? PRESETS.fan : PRESETS.stack))
+const preset = computed(() => (mode.value === 'fan' ? PRESETS.fan : PRESETS.stack))
 
 const stacked = computed(() =>
   props.cards.map((card, index) => {
@@ -62,7 +74,8 @@ function layerStyle(depth) {
   const fan = front && dragging.value ? dragDelta.value * 0.3 : 0
   const tilt = front && dragging.value ? dragDelta.value * 0.012 : 0
   return {
-    transform: `translate3d(${layer.x + fan}px, ${layer.y}px, 0) scale(${layer.s}) rotate(${layer.r + tilt}deg)`,
+    // x/y 允许写成 px 或 var()，用 calc 拼接即可同时兼容拖动时的像素偏移
+    transform: `translate3d(calc(${layer.x} + ${fan}px), calc(${layer.y}), 0) scale(${layer.s}) rotate(${layer.r + tilt}deg)`,
     opacity: layer.o,
     filter: layer.o < 0.7 ? 'blur(1px)' : 'none',
     zIndex: layer.z,
@@ -119,10 +132,6 @@ function onKeydown(event) {
   if (event.key === 'ArrowLeft') prev()
 }
 
-function syncWide(event) {
-  wide.value = event.matches
-}
-
 watch(active, async () => {
   await nextTick()
   const dot = dotsEl.value && dotsEl.value.querySelector('.deck__dot.is-active')
@@ -130,18 +139,10 @@ watch(active, async () => {
 })
 
 onMounted(() => {
-  mql = window.matchMedia('(min-width: 1040px)')
-  wide.value = mql.matches
-  if (mql.addEventListener) mql.addEventListener('change', syncWide)
-  else if (mql.addListener) mql.addListener(syncWide)
   window.addEventListener('keydown', onKeydown)
 })
 
 onBeforeUnmount(() => {
-  if (mql) {
-    if (mql.removeEventListener) mql.removeEventListener('change', syncWide)
-    else if (mql.removeListener) mql.removeListener(syncWide)
-  }
   window.removeEventListener('keydown', onKeydown)
 })
 </script>
@@ -150,7 +151,7 @@ onBeforeUnmount(() => {
   <div class="deck">
     <div
       class="deck__stage"
-      :class="wide ? 'deck__stage--fan' : 'deck__stage--stack'"
+      :class="mode === 'fan' ? 'deck__stage--fan' : 'deck__stage--stack'"
       role="group"
       aria-label="运势卡牌"
       @pointerdown="onPointerDown"
@@ -166,7 +167,13 @@ onBeforeUnmount(() => {
         :style="layerStyle(item.depth)"
         :aria-hidden="item.depth !== 0"
       >
-        <FortuneCard :card="item.card" :sign="sign" />
+        <FortuneCard
+          :card="item.card"
+          :sign="sign"
+          :scroll="scroll"
+          :wide="wide"
+          :ring-size="ringSize"
+        />
       </div>
     </div>
 
@@ -191,18 +198,16 @@ onBeforeUnmount(() => {
       <button class="deck__nav" type="button" aria-label="下一张" @click="next">›</button>
     </div>
 
-    <p class="deck__hint">第 {{ active + 1 }} / {{ total }} 张 · 点击卡牌或左右滑动切换</p>
+    <p v-if="showHint" class="deck__hint">第 {{ active + 1 }} / {{ total }} 张 · 点击卡牌或左右滑动切换</p>
   </div>
 </template>
 
 <style scoped>
 .deck {
-  /* 卡牌与舞台的宽度上限；小屏时由容器宽度决定，避免出现横向溢出 */
-  --card-w: 352px;
-  --stage-w: 352px;
+  /* 卡宽、舞台宽、间距都来自布局引擎（挂在根节点上的 CSS 变量） */
   display: flex;
   flex-direction: column;
-  gap: 18px;
+  gap: var(--deck-gap, 14px);
   align-items: center;
   width: 100%;
 }
@@ -218,8 +223,8 @@ onBeforeUnmount(() => {
 
 .deck__stage--stack {
   grid-template-columns: minmax(0, 1fr);
-  /* 后层改为左右错开、不再向下探出，底部只留一点呼吸空间 */
-  padding-bottom: 10px;
+  /* 后层只在横向错开，底部留 2px 给 0.5° 旋转带来的微小外扩 */
+  padding-bottom: 2px;
 }
 
 /* 以中心为旋转原点：若沿用 top center，0.5° 的小旋转会让底角横向外扩近 6px，
@@ -228,11 +233,15 @@ onBeforeUnmount(() => {
   transform-origin: center;
 }
 
-/* 宽屏改为横向扇形展开：舞台变宽，卡牌宽度保持不变 */
+/* 横向有富余时扇形展开：逐层位移按卡宽成比例，底部补上后层下探的量 */
 .deck__stage--fan {
-  --stage-w: 920px;
+  --fan-x1: calc(var(--card-w) * 0.26);
+  --fan-x2: calc(var(--card-w) * 0.478);
+  --fan-y1: calc(var(--card-w) * 0.034);
+  --fan-y2: calc(var(--card-w) * 0.074);
   grid-template-columns: minmax(0, 1fr);
-  padding-bottom: 72px;
+  /* 最外两层会低于前卡底边，这段高度由布局引擎算好后传进来 */
+  padding-bottom: var(--fan-drop, 0px);
 }
 
 .deck__layer {
@@ -268,16 +277,18 @@ onBeforeUnmount(() => {
 .deck__controls {
   display: flex;
   align-items: center;
-  gap: clamp(8px, 2vw, 16px);
+  gap: clamp(8px, calc(6px + 10px * var(--card-scale, 1)), 16px);
   width: 100%;
-  max-width: 560px;
+  /* 与卡牌同宽：宽而矮的窗口里卡会收窄，控件不能还停在 560px 上 */
+  max-width: var(--card-w, 560px);
+  min-height: var(--controls-h, 38px);
 }
 
 .deck__nav {
   display: grid;
   place-items: center;
-  width: 38px;
-  height: 38px;
+  width: var(--controls-h, 38px);
+  height: var(--controls-h, 38px);
   flex-shrink: 0;
   border-radius: 50%;
   border: 1px solid var(--line-strong);
@@ -339,22 +350,6 @@ onBeforeUnmount(() => {
   color: var(--ink-3);
   font-size: 11.5px;
   letter-spacing: 0.08em;
-}
-
-@media (max-width: 560px) {
-  .deck {
-    gap: 13px;
-  }
-  .deck__nav {
-    width: 34px;
-    height: 34px;
-    font-size: 17px;
-  }
-  .deck__layer {
-    transition-duration: 0.55s, 0.4s, 0.4s;
-  }
-  .deck__hint {
-    font-size: 11px;
-  }
+  height: var(--hint-h, auto);
 }
 </style>

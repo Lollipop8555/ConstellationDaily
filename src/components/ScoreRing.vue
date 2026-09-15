@@ -109,7 +109,8 @@ onMounted(() => {
 }
 
 .ring__center strong {
-  font-size: clamp(26px, 3.6vw, 34px);
+  /* 数值字号同样跟随卡宽（--card-scale 由根节点下发），不跟随视口 */
+  font-size: clamp(26px, calc(22px + 12px * var(--card-scale, 1)), 34px);
   font-weight: 500;
   letter-spacing: 0.02em;
   color: var(--ink-0);

@@ -84,7 +84,9 @@ body {
 #app {
   position: relative;
   z-index: 1;
+  /* dvh 跟随地址栏收放；不支持的浏览器退回 100vh */
   min-height: 100vh;
+  min-height: 100dvh;
 }
 
 h1,
@@ -160,12 +162,17 @@ a {
   width: 100%;
   max-width: var(--maxw);
   margin: 0 auto;
-  padding: 0 clamp(18px, 4.5vw, 44px);
+  /* 与布局引擎反推可用宽度时用的是同一个值 */
+  padding: 0 var(--container-pad, clamp(18px, 4.5vw, 44px));
 }
 
 .page {
-  padding-top: calc(var(--safe-top) + 22px);
-  padding-bottom: calc(var(--safe-bottom) + 64px);
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  /* 上下留白由布局引擎按视口高度算出（顶部安全区由顶栏承担） */
+  padding-top: var(--page-pad-top, 0px);
+  padding-bottom: var(--page-pad-bottom, 0px);
 }
 
 /* --------------------------- 通用元素 --------------------------- */

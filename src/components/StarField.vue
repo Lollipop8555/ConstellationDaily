@@ -85,7 +85,9 @@ function spawnMeteor() {
 
 function resize() {
   if (!canvasEl.value) return
-  dpr = Math.min(window.devicePixelRatio || 1, 2)
+  /* 上限压到 1.5：星点最大也就 1.5px 半径，Retina 上按 2 倍画等于每帧多填一倍
+     的像素，却看不出区别。这一档省下的填充量比看起来多。 */
+  dpr = Math.min(window.devicePixelRatio || 1, 1.5)
   width = canvasEl.value.clientWidth || window.innerWidth
   height = canvasEl.value.clientHeight || window.innerHeight
 
@@ -98,6 +100,19 @@ function resize() {
   buildStars()
   constellations = buildConstellations()
   meteors = []
+
+  /* 节点位置在 resize 之后就是固定的，把光晕渐变预建好：
+     原来每帧为每个节点新建一次 createRadialGradient（二十来个对象/帧），
+     没必要，强度用 globalAlpha 给。 */
+  for (const group of constellations) {
+    for (const node of group.nodes) {
+      const glow = ctx.createRadialGradient(node.x, node.y, 0, node.x, node.y, 18)
+      glow.addColorStop(0, 'rgba(214, 222, 255, 1)')
+      glow.addColorStop(0.35, 'rgba(154, 123, 255, 0.42)')
+      glow.addColorStop(1, 'rgba(154, 123, 255, 0)')
+      node.glow = glow
+    }
+  }
 
   if (prefersReduced) renderFrame(0)
 }
@@ -136,22 +151,20 @@ function renderConstellations(ts) {
     ctx.stroke()
 
     for (const node of group.nodes) {
-      const strength = Math.min(0.9, pulse * 3)
-      const glow = ctx.createRadialGradient(node.x, node.y, 0, node.x, node.y, 18)
-      glow.addColorStop(0, `rgba(214, 222, 255, ${strength})`)
-      glow.addColorStop(0.35, `rgba(154, 123, 255, ${strength * 0.42})`)
-      glow.addColorStop(1, 'rgba(154, 123, 255, 0)')
-      ctx.fillStyle = glow
+      ctx.globalAlpha = Math.min(0.9, pulse * 3)
+      ctx.fillStyle = node.glow
       ctx.beginPath()
       ctx.arc(node.x, node.y, 18, 0, Math.PI * 2)
       ctx.fill()
 
+      ctx.globalAlpha = Math.min(0.92, pulse * 3.6)
+      ctx.fillStyle = '#ffffff'
       ctx.beginPath()
       ctx.arc(node.x, node.y, 1.75, 0, Math.PI * 2)
-      ctx.fillStyle = `rgba(255, 255, 255, ${Math.min(0.92, pulse * 3.6)})`
       ctx.fill()
     }
   }
+  ctx.globalAlpha = 1
 }
 
 function renderMeteors(dt) {
@@ -292,35 +305,54 @@ onBeforeUnmount(() => {
 .starfield__nebula {
   position: absolute;
   border-radius: 50%;
-  filter: blur(90px);
   opacity: 0.42;
   animation: drift 22s ease-in-out infinite;
 }
 
 .starfield__nebula--violet {
-  width: 46vmax;
-  height: 46vmax;
+  width: 48vmax;
+  height: 48vmax;
   top: -16vmax;
   left: -12vmax;
-  background: radial-gradient(circle, rgba(122, 92, 255, 0.55), transparent 68%);
+  /* 弥散感交给多层渐变（原来靠 filter: blur(90px)）：
+     那可是几个上千像素的大层，每帧都要重算模糊，而且要动。 */
+  background: radial-gradient(
+    circle,
+    rgba(122, 92, 255, 0.5) 0%,
+    rgba(122, 92, 255, 0.3) 26%,
+    rgba(122, 92, 255, 0.1) 46%,
+    transparent 66%
+  );
 }
 
 .starfield__nebula--cyan {
-  width: 38vmax;
-  height: 38vmax;
+  width: 40vmax;
+  height: 40vmax;
   right: -12vmax;
   top: 18vh;
-  background: radial-gradient(circle, rgba(74, 178, 210, 0.42), transparent 68%);
+  background: radial-gradient(
+    circle,
+    rgba(74, 178, 210, 0.38) 0%,
+    rgba(74, 178, 210, 0.22) 26%,
+    rgba(74, 178, 210, 0.08) 46%,
+    transparent 66%
+  );
   animation-delay: -7s;
   animation-duration: 28s;
 }
 
 .starfield__nebula--gold {
-  width: 42vmax;
-  height: 42vmax;
+  width: 44vmax;
+  height: 44vmax;
   left: 22vw;
   bottom: -22vmax;
-  background: radial-gradient(circle, rgba(232, 201, 122, 0.26), transparent 70%);
+  background: radial-gradient(
+    circle,
+    rgba(232, 201, 122, 0.24) 0%,
+    rgba(232, 201, 122, 0.13) 26%,
+    rgba(232, 201, 122, 0.05) 46%,
+    transparent 68%
+  );
   animation-delay: -14s;
   animation-duration: 34s;
 }
@@ -331,7 +363,9 @@ onBeforeUnmount(() => {
   opacity: 0.05;
   background-image: radial-gradient(rgba(255, 255, 255, 0.6) 0.5px, transparent 0.6px);
   background-size: 3px 3px;
-  mix-blend-mode: overlay;
+  /* 不用 mix-blend-mode: overlay —— 混合模式会把这一层和它底下那张每帧都在变的
+     canvas 绑成同一个合成组，于是整屏（Retina 上千万像素）每帧都要重绘一遍。
+     0.05 的白色细点直接叠加，观感几乎没有区别。 */
 }
 
 .starfield__vignette {
