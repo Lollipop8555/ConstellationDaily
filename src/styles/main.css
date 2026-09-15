@@ -1,0 +1,325 @@
+/* ============================================================
+   全局样式：设计变量 / 重置 / 基础排版 / 通用组件 / 动画
+   ============================================================ */
+
+:root {
+  color-scheme: dark;
+
+  /* 背景层次 */
+  --bg-0: #04050c;
+  --bg-1: #080a16;
+  --bg-2: #0f1226;
+
+  /* 文字 */
+  --ink-0: #f2f4ff;
+  --ink-1: #c6cbe4;
+  --ink-2: #8d93b8;
+  --ink-3: #5f6486;
+
+  /* 线条与玻璃 */
+  --line: rgba(150, 165, 225, 0.14);
+  --line-strong: rgba(170, 185, 245, 0.28);
+  --glass: rgba(17, 21, 43, 0.62);
+  --glass-soft: rgba(17, 21, 43, 0.4);
+
+  /* 主题强调色 */
+  --gold: #e8c97a;
+  --violet: #9a7bff;
+  --cyan: #6fd7e8;
+  --rose: #ff8fb1;
+  --mint: #7fe0b0;
+
+  /* 圆角 */
+  --radius-xl: 28px;
+  --radius-lg: 20px;
+  --radius-md: 14px;
+  --radius-sm: 10px;
+
+  /* 阴影 */
+  --shadow-soft: 0 18px 48px -26px rgba(0, 0, 0, 0.9);
+  --shadow-card: 0 34px 80px -32px rgba(0, 0, 0, 0.95);
+
+  /* 动效曲线 */
+  --ease-out: cubic-bezier(0.22, 0.86, 0.28, 1);
+  --ease-spring: cubic-bezier(0.34, 1.42, 0.52, 1);
+
+  /* 字体 */
+  --font-sans: -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Hiragino Sans GB',
+    'Microsoft YaHei', 'Noto Sans SC', 'Helvetica Neue', Arial, sans-serif;
+  --font-serif: 'Songti SC', 'Source Han Serif SC', 'Noto Serif SC', 'STSong', Georgia, serif;
+
+  /* 布局 */
+  --maxw: 1140px;
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  min-height: 100%;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  font-family: var(--font-sans);
+  color: var(--ink-1);
+  background-color: var(--bg-0);
+  line-height: 1.75;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  overflow-x: hidden;
+}
+
+#app {
+  position: relative;
+  z-index: 1;
+  min-height: 100vh;
+}
+
+h1,
+h2,
+h3,
+h4 {
+  color: var(--ink-0);
+  font-weight: 500;
+  line-height: 1.35;
+  margin: 0;
+}
+
+p {
+  margin: 0;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+  border: none;
+  background: none;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+ul,
+ol {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+a {
+  color: var(--gold);
+  text-decoration: none;
+}
+
+::selection {
+  background: rgba(154, 123, 255, 0.4);
+  color: #fff;
+}
+
+:focus-visible {
+  outline: 2px solid rgba(232, 201, 122, 0.7);
+  outline-offset: 3px;
+  border-radius: 6px;
+}
+
+/* 滚动条（桌面端） */
+@media (pointer: fine) {
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: rgba(140, 155, 220, 0.22);
+    border-radius: 99px;
+    border: 3px solid transparent;
+    background-clip: content-box;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: rgba(154, 123, 255, 0.45);
+    background-clip: content-box;
+  }
+}
+
+/* ------------------------------ 布局 ------------------------------ */
+
+.container {
+  width: 100%;
+  max-width: var(--maxw);
+  margin: 0 auto;
+  padding: 0 clamp(18px, 4.5vw, 44px);
+}
+
+.page {
+  padding-top: calc(var(--safe-top) + 22px);
+  padding-bottom: calc(var(--safe-bottom) + 64px);
+}
+
+/* --------------------------- 通用元素 --------------------------- */
+
+.glass {
+  background: linear-gradient(
+    160deg,
+    rgba(28, 34, 66, 0.72) 0%,
+    rgba(13, 16, 34, 0.66) 55%,
+    rgba(9, 11, 24, 0.72) 100%
+  );
+  border: 1px solid var(--line);
+  backdrop-filter: blur(16px) saturate(130%);
+  -webkit-backdrop-filter: blur(16px) saturate(130%);
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 12px;
+  border-radius: 99px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.035);
+  color: var(--ink-2);
+  font-size: 12.5px;
+  letter-spacing: 0.06em;
+  line-height: 1.7;
+  white-space: nowrap;
+}
+
+.section-label {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12px;
+  letter-spacing: 0.34em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+
+.section-label::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: linear-gradient(90deg, var(--line-strong), transparent);
+}
+
+.btn-ghost {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 16px;
+  border-radius: 99px;
+  border: 1px solid var(--line-strong);
+  background: rgba(16, 20, 40, 0.6);
+  color: var(--ink-1);
+  font-size: 13.5px;
+  letter-spacing: 0.06em;
+  transition: border-color 0.35s var(--ease-out), color 0.35s var(--ease-out),
+    transform 0.35s var(--ease-spring), background 0.35s var(--ease-out),
+    box-shadow 0.35s var(--ease-out);
+}
+
+.btn-ghost:hover {
+  color: var(--ink-0);
+  border-color: rgba(232, 201, 122, 0.55);
+  background: rgba(232, 201, 122, 0.1);
+  transform: translateY(-2px);
+  box-shadow: 0 12px 30px -14px rgba(232, 201, 122, 0.5);
+}
+
+.btn-ghost:active {
+  transform: translateY(0) scale(0.97);
+}
+
+/* ------------------------------ 动画 ------------------------------ */
+
+@keyframes fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(18px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes drift {
+  0%,
+  100% {
+    transform: translate3d(0, 0, 0);
+  }
+  50% {
+    transform: translate3d(0, -12px, 0);
+  }
+}
+
+@keyframes glow-pulse {
+  0%,
+  100% {
+    opacity: 0.55;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.95;
+    transform: scale(1.06);
+  }
+}
+
+@keyframes spin-slow {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.animate-in {
+  animation: fade-up 0.9s var(--ease-out) both;
+}
+
+/* 视图切换过渡 */
+.view-enter-active {
+  transition: opacity 0.5s var(--ease-out), transform 0.6s var(--ease-out);
+}
+.view-leave-active {
+  transition: opacity 0.28s ease, transform 0.28s ease;
+  position: absolute;
+  inset: 0;
+}
+.view-enter-from {
+  opacity: 0;
+  transform: translateY(22px) scale(0.99);
+}
+.view-leave-to {
+  opacity: 0;
+  transform: translateY(-12px) scale(0.99);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}
