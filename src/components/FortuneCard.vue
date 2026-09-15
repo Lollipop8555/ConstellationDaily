@@ -304,9 +304,11 @@ watch(
   padding: var(--card-pad-y) var(--card-pad-x) calc(var(--card-pad-y) - 4px);
   border-radius: var(--radius-xl);
   border: 1px solid var(--line);
+  /* 底色必须不透明：牌堆里上下层会互相重叠，底色一旦带 alpha，下面那张的
+     内容就会从上面这张里透出来，叠几层就是一团糊。 */
   background:
     radial-gradient(120% 90% at 12% 0%, rgba(154, 123, 255, 0.16), transparent 58%),
-    linear-gradient(160deg, rgba(28, 33, 64, 0.94) 0%, rgba(14, 17, 36, 0.96) 55%, rgba(8, 10, 22, 0.98) 100%);
+    linear-gradient(160deg, #1c2140 0%, #0e1124 55%, #080a16 100%);
   box-shadow: var(--shadow-card);
   overflow: hidden;
   isolation: isolate;
