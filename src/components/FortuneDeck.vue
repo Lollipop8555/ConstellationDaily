@@ -270,7 +270,7 @@ onBeforeUnmount(() => {
     <div
       ref="stageEl"
       class="deck__stage"
-      :class="mode === 'fan' ? 'deck__stage--fan' : 'deck__stage--stack'"
+      :class="[mode === 'fan' ? 'deck__stage--fan' : 'deck__stage--stack', { 'is-dragging': dragging }]"
       role="group"
       aria-label="运势卡牌"
       @pointerdown="onPointerDown"
@@ -393,13 +393,22 @@ onBeforeUnmount(() => {
   cursor: grabbing;
 }
 
-.deck__layer :deep(.fcard) {
-  transition: border-color 0.5s var(--ease-out), box-shadow 0.5s var(--ease-out);
-}
+/* 悬停时前卡的"抬起"光晕。两道闸门缺一不可：
+   ① 只在真有悬停能力的桌面端生效。触摸端内核会把手指按下的 :hover 粘住，
+      而卡片滑走 / 换卡又会让它反复通断，光晕一明一暗 —— 看起来就是卡在
+      "两个状态"之间闪。
+   ② 拖动期间（.deck__stage.is-dragging）整条规则不匹配。卡是跟着手指挪开的，
+      手指底下必然换成别的元素，hover 想不闪也做不到；索性等松手之后再一次性
+      重新计算，中途一律不变。 */
+@media (hover: hover) and (pointer: fine) {
+  .deck__layer :deep(.fcard) {
+    transition: border-color 0.5s var(--ease-out), box-shadow 0.5s var(--ease-out);
+  }
 
-.deck__layer.is-front:hover :deep(.fcard) {
-  border-color: rgba(232, 201, 122, 0.34);
-  box-shadow: 0 42px 92px -36px rgba(0, 0, 0, 0.98), 0 0 60px -22px rgba(154, 123, 255, 0.55);
+  .deck__stage:not(.is-dragging) .deck__layer.is-front:hover :deep(.fcard) {
+    border-color: rgba(232, 201, 122, 0.34);
+    box-shadow: 0 42px 92px -36px rgba(0, 0, 0, 0.98), 0 0 60px -22px rgba(154, 123, 255, 0.55);
+  }
 }
 
 .deck__controls {
@@ -429,11 +438,15 @@ onBeforeUnmount(() => {
     color 0.35s var(--ease-out), background 0.35s var(--ease-out);
 }
 
-.deck__nav:hover {
-  transform: translateY(-2px);
-  color: var(--gold);
-  border-color: rgba(232, 201, 122, 0.5);
-  background: rgba(232, 201, 122, 0.1);
+/* 触摸端不给悬停态：点完一下之后内核会把 hover 留在按钮上，
+   按钮就一直是"高亮着"的样子，和当前状态无关。 */
+@media (hover: hover) and (pointer: fine) {
+  .deck__nav:hover {
+    transform: translateY(-2px);
+    color: var(--gold);
+    border-color: rgba(232, 201, 122, 0.5);
+    background: rgba(232, 201, 122, 0.1);
+  }
 }
 
 .deck__dots {
@@ -470,9 +483,11 @@ onBeforeUnmount(() => {
     border-color 0.35s var(--ease-out), transform 0.35s var(--ease-spring);
 }
 
-.deck__dot:hover {
-  color: var(--ink-1);
-  background: rgba(255, 255, 255, 0.05);
+@media (hover: hover) and (pointer: fine) {
+  .deck__dot:hover {
+    color: var(--ink-1);
+    background: rgba(255, 255, 255, 0.05);
+  }
 }
 
 .deck__dot.is-active {

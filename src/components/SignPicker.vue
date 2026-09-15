@@ -155,11 +155,18 @@ const gridStyle = computed(() => {
   align-content: center;
 }
 
-/* 悬停的卡要浮在相邻卡之上：否则它会钻到右边那张的下面，
-   上浮与光晕被吃掉一半。 */
-.picker__grid > *:hover,
+/* 悬停/聚焦的卡要浮在相邻卡之上：否则它会钻到右边那张的下面，
+   上浮与光晕被吃掉一半。
+   悬停只在真有悬停能力的桌面端给 —— 触摸端内核会把 hover 粘在手指按过的
+   那张卡上，于是相邻两张卡会反复抢层级、一起闪。 */
 .picker__grid > *:focus-visible {
   z-index: 2;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .picker__grid > *:hover {
+    z-index: 2;
+  }
 }
 
 .picker__hint {

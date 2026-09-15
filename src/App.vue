@@ -220,13 +220,17 @@ onBeforeUnmount(() => {
     background 0.35s var(--ease-out);
 }
 
-.brand--home:hover .brand__text strong {
-  color: var(--gold);
-}
+/* 触摸端不给悬停态：内核会把手指按下的 hover 留在品牌上，
+   返回按钮就一直亮着，和当前状态无关。 */
+@media (hover: hover) and (pointer: fine) {
+  .brand--home:hover .brand__text strong {
+    color: var(--gold);
+  }
 
-.brand--home:hover .brand__mark {
-  border-color: rgba(232, 201, 122, 0.6);
-  background: linear-gradient(150deg, rgba(232, 201, 122, 0.32), rgba(154, 123, 255, 0.18));
+  .brand--home:hover .brand__mark {
+    border-color: rgba(232, 201, 122, 0.6);
+    background: linear-gradient(150deg, rgba(232, 201, 122, 0.32), rgba(154, 123, 255, 0.18));
+  }
 }
 
 /* 键盘用户要看得见焦点；鼠标与触摸点击不额外画框 */
