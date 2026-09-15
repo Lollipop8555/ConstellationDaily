@@ -60,6 +60,12 @@
   box-sizing: border-box;
 }
 
+/* 触摸端按下时内核会盖一层高亮（安卓上是灰块、X5 上是蓝框），
+   牌组一拖动它就跟着手指一路闪，等于自带一个"闪一下"。这里统一摘掉。 */
+* {
+  -webkit-tap-highlight-color: transparent;
+}
+
 html,
 body {
   margin: 0;
@@ -252,12 +258,14 @@ a {
     box-shadow 0.35s var(--ease-out);
 }
 
-.btn-ghost:hover {
-  color: var(--ink-0);
-  border-color: rgba(232, 201, 122, 0.55);
-  background: rgba(232, 201, 122, 0.1);
-  transform: translateY(-2px);
-  box-shadow: 0 12px 30px -14px rgba(232, 201, 122, 0.5);
+@media (hover: hover) and (pointer: fine) {
+  .btn-ghost:hover {
+    color: var(--ink-0);
+    border-color: rgba(232, 201, 122, 0.55);
+    background: rgba(232, 201, 122, 0.1);
+    transform: translateY(-2px);
+    box-shadow: 0 12px 30px -14px rgba(232, 201, 122, 0.5);
+  }
 }
 
 .btn-ghost:active {

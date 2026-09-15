@@ -107,12 +107,23 @@ const cardStyle = {
     box-shadow 0.5s var(--ease-out);
 }
 
-.sign-card:hover,
+/* 聚焦时的上浮与键盘用户无关设备，照常给；:hover 则只在真有悬停能力的
+   桌面端生效 —— 触摸端内核会把手指按下时的 hover 粘住，手指一挪、卡一换，
+   它就在"有/无"之间反复通断，整张卡连着光晕一明一暗。 */
 .sign-card:focus-visible {
   transform: translateY(-8px) scale(1.025);
   border-color: rgba(var(--from-rgb), 0.55);
   box-shadow: 0 26px 54px -26px rgba(0, 0, 0, 0.95),
     0 0 40px -14px rgba(var(--from-rgb), 0.6);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .sign-card:hover {
+    transform: translateY(-8px) scale(1.025);
+    border-color: rgba(var(--from-rgb), 0.55);
+    box-shadow: 0 26px 54px -26px rgba(0, 0, 0, 0.95),
+      0 0 40px -14px rgba(var(--from-rgb), 0.6);
+  }
 }
 
 .sign-card:active {
@@ -140,9 +151,11 @@ const cardStyle = {
   transition: opacity 0.6s var(--ease-out), transform 0.6s var(--ease-out);
 }
 
-.sign-card:hover .sign-card__aura {
-  opacity: 0.5;
-  transform: translateX(-50%) scale(1.08);
+@media (hover: hover) and (pointer: fine) {
+  .sign-card:hover .sign-card__aura {
+    opacity: 0.5;
+    transform: translateX(-50%) scale(1.08);
+  }
 }
 
 .sign-card__shine {
@@ -159,8 +172,10 @@ const cardStyle = {
   pointer-events: none;
 }
 
-.sign-card:hover .sign-card__shine {
-  transform: translateX(120%);
+@media (hover: hover) and (pointer: fine) {
+  .sign-card:hover .sign-card__shine {
+    transform: translateX(120%);
+  }
 }
 
 .sign-card__glyph {
@@ -171,9 +186,11 @@ const cardStyle = {
   transition: transform 0.55s var(--ease-spring), text-shadow 0.55s var(--ease-out);
 }
 
-.sign-card:hover .sign-card__glyph {
-  transform: scale(1.12) rotate(-4deg);
-  text-shadow: 0 0 34px rgba(var(--from-rgb), 0.92);
+@media (hover: hover) and (pointer: fine) {
+  .sign-card:hover .sign-card__glyph {
+    transform: scale(1.12) rotate(-4deg);
+    text-shadow: 0 0 34px rgba(var(--from-rgb), 0.92);
+  }
 }
 
 .sign-card__name {
@@ -194,8 +211,10 @@ const cardStyle = {
   transition: color 0.4s var(--ease-out);
 }
 
-.sign-card:hover .sign-card__en {
-  color: var(--from-ink-soft);
+@media (hover: hover) and (pointer: fine) {
+  .sign-card:hover .sign-card__en {
+    color: var(--from-ink-soft);
+  }
 }
 
 .sign-card__range {
