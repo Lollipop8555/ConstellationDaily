@@ -34,8 +34,12 @@ jobs:
       - name: Build
         run: npm run build
 
+      # enablement: 首次运行时仓库的 Pages 还没启用，默认的 GET 调用会直接 404。
+      # 打开后 action 会尝试自动创建 Pages 站点（依赖上面 permissions 里的 pages: write）。
       - name: Setup Pages
         uses: actions/configure-pages@v5
+        with:
+          enablement: true
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
