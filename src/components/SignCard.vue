@@ -21,9 +21,38 @@ const props = defineProps({
 
 const emit = defineEmits(['select'])
 
+function parseHex(hex) {
+  const raw = String(hex || '').trim().replace(/^#/, '')
+  const full = raw.length === 3 ? raw.replace(/./g, (c) => c + c) : raw
+  if (full.length !== 6) return null
+  const num = Number.parseInt(full, 16)
+  if (!Number.isFinite(num)) return null
+  return { r: (num >> 16) & 255, g: (num >> 8) & 255, b: num & 255 }
+}
+
+/** 供 rgba(var(--from-rgb), α) 用 */
+function toRgbTriplet(hex) {
+  const rgb = parseHex(hex)
+  return rgb ? `${rgb.r}, ${rgb.g}, ${rgb.b}` : '232, 201, 122'
+}
+
+/** 等价于 color-mix(in srgb, <hex> ratio, #ffffff)，只是提前在 JS 里算好 */
+function mixWithWhite(hex, ratio) {
+  const rgb = parseHex(hex)
+  if (!rgb) return '#ffffff'
+  const blend = (channel) => Math.round(channel * ratio + 255 * (1 - ratio))
+  return `rgb(${blend(rgb.r)}, ${blend(rgb.g)}, ${blend(rgb.b)})`
+}
+
 const cardStyle = {
   '--from': props.sign.theme.from,
   '--to': props.sign.theme.to,
+  // color-mix() 需要 Chrome 111+，微信内置的 X5 内核够不到，
+  // 一条不认就会把整条 border-color / background 声明丢掉，卡就没有主题色了。
+  // 颜色统一在这里算好，CSS 只用 rgba() / rgb()，任何内核都画得出来。
+  '--from-rgb': toRgbTriplet(props.sign.theme.from),
+  '--from-ink': mixWithWhite(props.sign.theme.from, 0.84),
+  '--from-ink-soft': mixWithWhite(props.sign.theme.from, 0.72),
   '--delay': `${props.index * 55}ms`,
 }
 </script>
@@ -81,9 +110,9 @@ const cardStyle = {
 .sign-card:hover,
 .sign-card:focus-visible {
   transform: translateY(-8px) scale(1.025);
-  border-color: color-mix(in srgb, var(--from) 55%, transparent);
+  border-color: rgba(var(--from-rgb), 0.55);
   box-shadow: 0 26px 54px -26px rgba(0, 0, 0, 0.95),
-    0 0 40px -14px color-mix(in srgb, var(--from) 60%, transparent);
+    0 0 40px -14px rgba(var(--from-rgb), 0.6);
 }
 
 .sign-card:active {
@@ -103,8 +132,8 @@ const cardStyle = {
      实测这是掉帧的第二来源；渐变只是一次插值，观感几乎一样。 */
   background: radial-gradient(
     circle,
-    color-mix(in srgb, var(--from) 52%, transparent) 0%,
-    color-mix(in srgb, var(--from) 21%, transparent) 44%,
+    rgba(var(--from-rgb), 0.52) 0%,
+    rgba(var(--from-rgb), 0.21) 44%,
     transparent 72%
   );
   opacity: 0.2;
@@ -137,14 +166,14 @@ const cardStyle = {
 .sign-card__glyph {
   font-size: 2.4em;
   line-height: 1.3;
-  color: color-mix(in srgb, var(--from) 84%, #ffffff);
-  text-shadow: 0 0 22px color-mix(in srgb, var(--from) 70%, transparent);
+  color: var(--from-ink);
+  text-shadow: 0 0 22px rgba(var(--from-rgb), 0.7);
   transition: transform 0.55s var(--ease-spring), text-shadow 0.55s var(--ease-out);
 }
 
 .sign-card:hover .sign-card__glyph {
   transform: scale(1.12) rotate(-4deg);
-  text-shadow: 0 0 34px color-mix(in srgb, var(--from) 92%, transparent);
+  text-shadow: 0 0 34px rgba(var(--from-rgb), 0.92);
 }
 
 .sign-card__name {
@@ -166,7 +195,7 @@ const cardStyle = {
 }
 
 .sign-card:hover .sign-card__en {
-  color: color-mix(in srgb, var(--from) 72%, #ffffff);
+  color: var(--from-ink-soft);
 }
 
 .sign-card__range {

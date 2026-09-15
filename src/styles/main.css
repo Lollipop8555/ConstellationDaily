@@ -84,9 +84,9 @@ body {
 #app {
   position: relative;
   z-index: 1;
-  /* dvh 跟随地址栏收放；不支持的浏览器退回 100vh */
-  min-height: 100vh;
-  min-height: 100dvh;
+  /* 这里刻意不写 100vh / 100dvh：高度的唯一基准是布局引擎算出来的 --app-h
+     （挂在下层 .app 上，并带了 100dvh 兜底）。
+     两个基准并存会在地址栏收放时互相打架，整屏抖一下。 */
 }
 
 h1,
@@ -153,6 +153,21 @@ a {
   ::-webkit-scrollbar-thumb:hover {
     background: rgba(154, 123, 255, 0.45);
     background-clip: content-box;
+  }
+}
+
+/* 触摸端一律不画滚动条。
+   微信 X5 之类会给每个 overflow 容器画一条常驻滚动条，牌组里五张卡一叠，
+   右侧就成了"好几条拖拽进度条"；这里兜底全部抹掉，卡内是否还能滚由容器决定。
+   桌面端在上面单独放了一条细的。 */
+@media (pointer: coarse) {
+  * {
+    scrollbar-width: none;
+  }
+  *::-webkit-scrollbar {
+    width: 0 !important;
+    height: 0 !important;
+    display: none !important;
   }
 }
 
@@ -308,17 +323,20 @@ a {
   transition: opacity 0.5s var(--ease-out), transform 0.6s var(--ease-out);
 }
 .view-leave-active {
+  /* 不要在这里把离场视图改成 position: absolute：
+     父容器高度由子元素撑开，一旦子元素脱离文档流，页面高度会瞬间塌成 0，
+     页脚先窜上去再落回来 —— 就是切页时那一下"闪"。让它照常占位即可。 */
   transition: opacity 0.28s ease, transform 0.28s ease;
-  position: absolute;
-  inset: 0;
 }
 .view-enter-from {
+  /* 只用位移，不用 scale：缩放会让整棵子树的文字重新光栅化，
+     过渡期间字会发虚、也会明显更吃性能。 */
   opacity: 0;
-  transform: translateY(22px) scale(0.99);
+  transform: translateY(18px);
 }
 .view-leave-to {
   opacity: 0;
-  transform: translateY(-12px) scale(0.99);
+  transform: translateY(-12px);
 }
 
 @media (prefers-reduced-motion: reduce) {

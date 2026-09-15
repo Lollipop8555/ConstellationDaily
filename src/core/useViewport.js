@@ -17,10 +17,42 @@ import { onBeforeUnmount, onMounted, ref } from 'vue'
 
 const RETRY_DELAYS = [120, 380]
 
-function readPx(styles, name) {
-  const raw = styles.getPropertyValue(name)
-  const value = Number.parseFloat(raw)
-  return Number.isFinite(value) ? value : 0
+/**
+ * 高度死区。
+ * 移动端地址栏会随着手指上下滑动不停收放，visualViewport.height 也就一直在变；
+ * 而这里的排版是"整屏重算"的，一次 vh 变化 = 全页重排一次。
+ * 于是"滚一下页面 → 地址栏动 → 整屏闪一下、还卡"。
+ * 地址栏收放的幅度（iOS 最多约 130px，Android/微信约 60~90px）都落在这个死区里，
+ * 而旋转一定会同时改变宽度、软键盘一定远大于这个幅度，两头都不会漏。
+ */
+const HEIGHT_DEADZONE = 160
+
+/**
+ * env(safe-area-inset-*) 只能靠探针量。
+ * 直接 getComputedStyle(...).getPropertyValue('--safe-top') 是碰运气：
+ * 有的内核会把 "env(safe-area-inset-top, 0px)" 原样吐回来，parseFloat 得 NaN，
+ * 刘海屏的安全区就被当成 0，页头会直接钻到状态栏底下。
+ * 往探针上挂 padding 再读计算值，拿到的必定是解析后的像素数。
+ */
+let probe = null
+
+function readSafeInsets() {
+  if (!probe) {
+    probe = document.createElement('div')
+    probe.setAttribute('aria-hidden', 'true')
+    probe.style.cssText =
+      'position:fixed;top:0;left:0;width:0;height:0;visibility:hidden;pointer-events:none;' +
+      'padding-top:env(safe-area-inset-top,0px);' +
+      'padding-right:env(safe-area-inset-right,0px);' +
+      'padding-bottom:env(safe-area-inset-bottom,0px);' +
+      'padding-left:env(safe-area-inset-left,0px);'
+    document.body.appendChild(probe)
+  }
+  const styles = getComputedStyle(probe)
+  return {
+    safeTop: Number.parseFloat(styles.paddingTop) || 0,
+    safeBottom: Number.parseFloat(styles.paddingBottom) || 0,
+  }
 }
 
 /** 真实可见高度：移动端只有 visualViewport 说了算，桌面端退化为 innerHeight */
@@ -32,19 +64,23 @@ function readHeight() {
 
 export function measureViewport() {
   const root = document.documentElement
-  const styles = getComputedStyle(root)
+  const insets = readSafeInsets()
   return {
     vw: Math.round(root.clientWidth || window.innerWidth),
     vh: readHeight(),
-    safeTop: readPx(styles, '--safe-top'),
-    safeBottom: readPx(styles, '--safe-bottom'),
+    safeTop: insets.safeTop,
+    safeBottom: insets.safeBottom,
   }
 }
 
-function same(a, b) {
-  return (
-    a.vw === b.vw && a.vh === b.vh && a.safeTop === b.safeTop && a.safeBottom === b.safeBottom
-  )
+/**
+ * 这张新的尺寸是否值得重排整页。
+ * 宽度（旋转、分屏、窗口缩放）与安全区一律立即生效；高度则要穿过死区。
+ */
+function worthRepainting(next, prev) {
+  if (next.vw !== prev.vw) return true
+  if (next.safeTop !== prev.safeTop || next.safeBottom !== prev.safeBottom) return true
+  return Math.abs(next.vh - prev.vh) >= HEIGHT_DEADZONE
 }
 
 export function useViewport() {
@@ -65,7 +101,8 @@ export function useViewport() {
       timer = 0
     }
     const next = measureViewport()
-    if (!same(next, size.value)) size.value = next
+    // 死区把"地址栏收放"这一类的微调挡在外面，避免整屏重排
+    if (worthRepainting(next, size.value)) size.value = next
   }
 
   function sync() {

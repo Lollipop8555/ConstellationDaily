@@ -53,24 +53,40 @@ function autoFit() {
 }
 
 let observer = null
+let fitFrame = 0
+
+/**
+ * autoFit 内部是一圈"写字号 → 读 scrollHeight"的循环，每一步都会强制同步布局，
+ * 一次视口变化里连着跑好几遍很贵。ResizeObserver 又可能在同一帧回调多次，
+ * 所以先合并到一帧里，只跑最后一次。
+ */
+function scheduleFit() {
+  if (fitFrame) return
+  fitFrame = window.requestAnimationFrame(() => {
+    fitFrame = 0
+    autoFit()
+  })
+}
 
 onMounted(() => {
   autoFit()
   // 视口变化会改卡的外形（进而改字号档位）与栏宽，两者都会影响折行，得重新量
   if (typeof ResizeObserver !== 'undefined') {
-    observer = new ResizeObserver(autoFit)
+    observer = new ResizeObserver(scheduleFit)
     observer.observe(rootEl.value)
   }
 })
 
 onBeforeUnmount(() => {
+  if (fitFrame) window.cancelAnimationFrame(fitFrame)
+  fitFrame = 0
   if (observer) observer.disconnect()
   observer = null
 })
 
 watch(
   () => [props.wide, props.card, props.sign],
-  () => nextTick(autoFit),
+  () => nextTick(scheduleFit),
 )
 </script>
 
@@ -413,22 +429,12 @@ watch(
   gap: 16px;
 }
 
-/* 兜底：屏幕矮到任何卡宽都放不下时，只有卡牌正文滚动，页头与页脚保持可见 */
+/* 兜底：屏幕矮到任何卡宽都放不下时，只有卡牌正文滚动，页头与页脚保持可见。
+   滚动条本身在文件末尾统一处理（触摸端收起、桌面端细条）。 */
 .fcard.is-scroll .fcard__body {
   min-height: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
-  scrollbar-width: thin;
-  scrollbar-color: rgba(150, 165, 225, 0.35) transparent;
-}
-
-.fcard.is-scroll .fcard__body::-webkit-scrollbar {
-  width: 5px;
-}
-
-.fcard.is-scroll .fcard__body::-webkit-scrollbar-thumb {
-  border-radius: 99px;
-  background: rgba(150, 165, 225, 0.35);
 }
 
 .fcard__body--score {
@@ -847,6 +853,9 @@ watch(
    而不是把内容顶出卡片上沿（那样顶部会没救）。 */
 .fcard.is-wide .fcard__body {
   display: grid;
+  /* 老 WebView（微信 X5）不认 safe 关键字，整条声明会被丢掉、退回默认的 stretch，
+     所以先给一条普通 center 兜底 */
+  align-content: center;
   align-content: safe center;
   overflow-y: auto;
   gap: 6px 20px;
@@ -1029,4 +1038,47 @@ watch(
   grid-column: 2;
 }
 
+/* ---------------- 卡内滚动条 ---------------- */
+
+/* 移动端 WebView（微信 X5 等）会给每个 overflow 容器画出常驻滚动条：
+   牌组里五张卡叠在一起，就是右侧那"好几条拖拽进度条"。这里统一收起，
+   只在桌面端（精确指针）给一条细的。 */
+.fcard.is-scroll .fcard__body,
+.fcard.is-wide .fcard__body {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.fcard.is-scroll .fcard__body::-webkit-scrollbar,
+.fcard.is-wide .fcard__body::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+}
+
+/* 收起滚动条之后，用贴着正文框底边的渐隐当作"下面还有"的提示 */
+.fcard.is-scroll .fcard__body {
+  -webkit-mask-image: linear-gradient(180deg, #000 0, #000 calc(100% - 26px), transparent 100%);
+  mask-image: linear-gradient(180deg, #000 0, #000 calc(100% - 26px), transparent 100%);
+}
+
+@media (pointer: fine) {
+  .fcard.is-scroll .fcard__body,
+  .fcard.is-wide .fcard__body {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(150, 165, 225, 0.35) transparent;
+    -webkit-mask-image: none;
+    mask-image: none;
+  }
+
+  .fcard.is-scroll .fcard__body::-webkit-scrollbar,
+  .fcard.is-wide .fcard__body::-webkit-scrollbar {
+    width: 5px;
+  }
+
+  .fcard.is-scroll .fcard__body::-webkit-scrollbar-thumb,
+  .fcard.is-wide .fcard__body::-webkit-scrollbar-thumb {
+    border-radius: 99px;
+    background: rgba(150, 165, 225, 0.35);
+  }
+}
 </style>

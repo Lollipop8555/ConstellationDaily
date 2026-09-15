@@ -29,14 +29,31 @@ const radius = computed(() => (props.size - props.stroke) / 2)
 const circumference = computed(() => 2 * Math.PI * radius.value)
 const dashOffset = computed(() => circumference.value * (1 - progress.value / 100))
 
+const prefersReduced =
+  typeof window !== 'undefined' && window.matchMedia
+    ? window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    : false
+
 onMounted(() => {
+  if (prefersReduced) {
+    progress.value = props.value
+    shownValue.value = props.value
+    return
+  }
   const duration = 1150
   const startAt = performance.now()
+  // 一副牌里十几只环是同时挂载的，每只环每帧都改一次 DOM，就是十几棵子树
+  // 一起重渲染。数字跳字用不着 60fps，压到 30fps 观感一样、开销减半。
+  const FRAME_MS = 1000 / 30
+  let lastDraw = 0
   const tick = (now) => {
     const t = Math.min(1, (now - startAt) / duration)
-    const eased = 1 - Math.pow(1 - t, 3)
-    progress.value = props.value * eased
-    shownValue.value = Math.round(props.value * eased)
+    if (t >= 1 || now - lastDraw >= FRAME_MS - 1) {
+      lastDraw = now
+      const eased = 1 - Math.pow(1 - t, 3)
+      progress.value = props.value * eased
+      shownValue.value = Math.round(props.value * eased)
+    }
     if (t < 1) window.requestAnimationFrame(tick)
   }
   window.requestAnimationFrame(tick)
@@ -90,15 +107,31 @@ onMounted(() => {
   flex-shrink: 0;
 }
 
+/* 暖色光晕用一层静态渐变垫在环下面（原来是 svg 上的 drop-shadow）。
+   环的进度每帧都在动，drop-shadow 会让这枚 svg 每帧重新光栅化一次；
+   渐变层只画一次，之后每帧都直接复用。 */
+.ring::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: radial-gradient(
+    circle,
+    rgba(232, 201, 122, 0.2) 0%,
+    rgba(232, 201, 122, 0.08) 52%,
+    transparent 74%
+  );
+  pointer-events: none;
+}
+
 .ring svg {
   position: absolute;
   inset: 0;
-  filter: drop-shadow(0 0 14px rgba(232, 201, 122, 0.28));
 }
 
-.ring__bar {
-  transition: stroke-dashoffset 0.25s linear;
-}
+/* 注意：这里不要再给 .ring__bar 挂 stroke-dashoffset 的过渡。
+   进度本来就是一帧一帧推上去的，再加一条 0.25s 过渡只会让环一直落后数字小半秒，
+   而且每帧都要重启一次过渡。 */
 
 .ring__center {
   position: relative;
