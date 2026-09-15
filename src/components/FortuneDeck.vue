@@ -53,10 +53,37 @@ const PRESETS = {
 
 const active = ref(0)
 const dragging = ref(false)
-const dragDelta = ref(0)
 const dotsEl = ref(null)
+const stageEl = ref(null)
 
-let startX = null
+/** 拖动时的跟手比例：卡走多远 / 手指走多远 */
+const FOLLOW = 0.5
+/** 每像素位移转成的倾角，以及倾角上限 */
+const TILT = 0.018
+const TILT_MAX = 6
+/** 位移超过它就不再算"点了一下" */
+const TAP_SLOP = 8
+/** 触发翻牌的手势位移阈值 */
+const SWIPE = 48
+/** 判定手势方向前先吃掉的手抖 */
+const AXIS_SLOP = 6
+
+/** 与 layerStyle 用同一个写法，位移才能逐项插值而不是退化成矩阵插值 */
+function transformOf(x, y, scale, rotate) {
+  return `translate3d(${x}, ${y}, 0) scale(${scale}) rotate(${rotate}deg)`
+}
+
+const IDENTITY_TRANSFORM = transformOf('0px', '0px', 1, 0)
+
+let pointerId = null
+let frontEl = null
+let startX = 0
+let startY = 0
+/** null = 还没定方向；'x' = 牌组接管；'y' = 让给正文纵向滚动 */
+let axis = null
+let dx = 0
+let dy = 0
+let rafId = 0
 
 const total = computed(() => props.cards.length)
 const preset = computed(() => (mode.value === 'fan' ? PRESETS.fan : PRESETS.stack))
@@ -70,17 +97,54 @@ const stacked = computed(() =>
 
 function layerStyle(depth) {
   const layer = preset.value[depth] || preset.value[preset.value.length - 1]
-  const front = depth === 0
-  const fan = front && dragging.value ? dragDelta.value * 0.3 : 0
-  const tilt = front && dragging.value ? dragDelta.value * 0.012 : 0
   return {
-    // x/y 允许写成 px 或 var()，用 calc 拼接即可同时兼容拖动时的像素偏移
-    transform: `translate3d(calc(${layer.x} + ${fan}px), calc(${layer.y}), 0) scale(${layer.s}) rotate(${layer.r + tilt}deg)`,
+    // x/y 允许写成 px 或 var()：扇形展开的偏移量就挂在舞台上的 CSS 变量里
+    transform: transformOf(layer.x, layer.y, layer.s, layer.r),
     opacity: layer.o,
-    filter: layer.o < 0.7 ? 'blur(1px)' : 'none',
     zIndex: layer.z,
-    pointerEvents: front ? 'auto' : 'none',
+    pointerEvents: depth === 0 ? 'auto' : 'none',
   }
+}
+
+/**
+ * 拖动全程绕开响应式：如果把"手指位移"放进 ref，每一次 pointermove 都会让
+ * 六张卡一起重算样式并重排一遍 —— 手指随便动一下就是一次全量渲染，屏幕上就成了"抖"。
+ * 这里只在 rAF 里直接写前卡的 transform，Vue 只负责 `dragging` 这一个布尔（进出各一次）。
+ */
+function paintDrag() {
+  rafId = 0
+  if (!frontEl) return
+  const shift = dx * FOLLOW
+  const tilt = Math.max(-TILT_MAX, Math.min(TILT_MAX, dx * TILT))
+  frontEl.style.transform = transformOf(`${shift.toFixed(2)}px`, '0px', 1, tilt.toFixed(3))
+}
+
+function scheduleDrag() {
+  if (!rafId) rafId = window.requestAnimationFrame(paintDrag)
+}
+
+/**
+ * 结束一次手势。
+ * @param {boolean} springBack 是否让前卡弹回原位（横向手势需要，点按不需要）
+ */
+function endDrag(springBack) {
+  if (rafId) {
+    window.cancelAnimationFrame(rafId)
+    rafId = 0
+  }
+  const el = frontEl
+  frontEl = null
+  pointerId = null
+  axis = null
+  dx = 0
+  dy = 0
+  dragging.value = false
+  if (!el) return
+  // 先把行内 transition 撤掉，恢复 .deck__layer 上那条过渡，
+  // 再把 transform 写回原位 —— 浏览器就会自己把它弹回去，而不是硬切。
+  el.style.removeProperty('transition')
+  if (springBack) el.style.transform = IDENTITY_TRANSFORM
+  else el.style.removeProperty('transform')
 }
 
 function next() {
@@ -96,35 +160,86 @@ function goTo(index) {
 }
 
 function onPointerDown(event) {
-  if (event.button !== undefined && event.button !== 0) return
+  if (pointerId !== null) return
+  if (event.pointerType === 'mouse' && event.button !== 0) return
+  const stage = stageEl.value
+  if (!stage) return
+  frontEl = stage.querySelector('.deck__layer.is-front')
+  if (!frontEl) return
+
+  pointerId = event.pointerId
   startX = event.clientX
+  startY = event.clientY
+  axis = null
+  dx = 0
+  dy = 0
+  // 过渡在拖动期间必须消失，否则卡会追着手指延迟半秒才到位
+  frontEl.style.transition = 'none'
   dragging.value = true
-  dragDelta.value = 0
-  const target = event.currentTarget
-  if (target && target.setPointerCapture) {
+
+  // 触摸指针在规范里本来就是隐式捕获给目标元素的，不需要也不该显式捕获
+  // （显式捕获会把事件从卡内滚动容器那里抢走）。只有鼠标才需要，为的是
+  // 拖到元素外面也还能跟手。
+  if (event.pointerType === 'mouse' && stage.setPointerCapture) {
     try {
-      target.setPointerCapture(event.pointerId)
+      stage.setPointerCapture(event.pointerId)
     } catch (error) {
-      /* 少数浏览器不支持指针捕获，忽略即可 */
+      /* 少数环境不支持指针捕获，忽略即可 */
     }
   }
 }
 
 function onPointerMove(event) {
-  if (!dragging.value || startX === null) return
-  dragDelta.value = event.clientX - startX
+  if (pointerId === null || event.pointerId !== pointerId) return
+  dx = event.clientX - startX
+  dy = event.clientY - startY
+
+  if (axis === null) {
+    if (Math.abs(dx) < AXIS_SLOP && Math.abs(dy) < AXIS_SLOP) return
+    // 方向定下来就不再改：横向归牌组，纵向还给正文滚动。
+    // 不定向的话浏览器会一直准备纵向滚动，半途抛一个 pointercancel 把手势腰斩 ——
+    // 这正是"按着滑却感觉时断时续"的来源。
+    axis = Math.abs(dx) > Math.abs(dy) ? 'x' : 'y'
+    if (axis === 'y') {
+      endDrag(false)
+      return
+    }
+  }
+  if (axis !== 'x') return
+  scheduleDrag()
 }
 
-function onPointerUp() {
-  if (!dragging.value) return
-  const delta = dragDelta.value
-  const wasTap = Math.abs(delta) < 8
-  dragging.value = false
-  startX = null
-  dragDelta.value = 0
+function onPointerUp(event) {
+  if (pointerId === null || (event && event.pointerId !== pointerId)) return
+  const horizontal = axis === 'x'
+  const delta = dx
+  // 点按要求两个方向都没怎么动过：正文纵向滚动结束时 dx 也接近 0，
+  // 只看 dx 会把"滚了一下正文"当成"点了一下卡"，卡就自己翻页了。
+  const wasTap = !horizontal && Math.abs(dx) < TAP_SLOP && Math.abs(dy) < TAP_SLOP
 
-  if (delta <= -48 || wasTap) next()
-  else if (delta >= 48) prev()
+  endDrag(horizontal)
+
+  if (horizontal && delta <= -SWIPE) next()
+  else if (horizontal && delta >= SWIPE) prev()
+  else if (wasTap) next()
+}
+
+/**
+ * 手势被浏览器取消（来电、系统手势、被父级滚动接管）时只复位，绝不翻牌。
+ */
+function onPointerCancel(event) {
+  if (pointerId === null || (event && event.pointerId !== pointerId)) return
+  endDrag(false)
+}
+
+/**
+ * 横向手势一旦确认，就由牌组独占这次触摸：
+ * 浏览器即使因为 touch-action: pan-y 打算纵向滚动，也会被这里拦下，
+ * 于是不会发出 pointercancel，整段手势是连续的。
+ */
+function onTouchMove(event) {
+  if (pointerId === null || axis !== 'x') return
+  if (event.cancelable) event.preventDefault()
 }
 
 function onKeydown(event) {
@@ -140,16 +255,20 @@ watch(active, async () => {
 
 onMounted(() => {
   window.addEventListener('keydown', onKeydown)
+  // 必须显式声明非 passive，否则 preventDefault 无效，横向手势照样会被浏览器抢走
+  if (stageEl.value) stageEl.value.addEventListener('touchmove', onTouchMove, { passive: false })
 })
 
 onBeforeUnmount(() => {
   window.removeEventListener('keydown', onKeydown)
+  if (stageEl.value) stageEl.value.removeEventListener('touchmove', onTouchMove)
 })
 </script>
 
 <template>
   <div class="deck">
     <div
+      ref="stageEl"
       class="deck__stage"
       :class="mode === 'fan' ? 'deck__stage--fan' : 'deck__stage--stack'"
       role="group"
@@ -157,7 +276,7 @@ onBeforeUnmount(() => {
       @pointerdown="onPointerDown"
       @pointermove="onPointerMove"
       @pointerup="onPointerUp"
-      @pointercancel="onPointerUp"
+      @pointercancel="onPointerCancel"
     >
       <div
         v-for="item in stacked"
@@ -167,10 +286,12 @@ onBeforeUnmount(() => {
         :style="layerStyle(item.depth)"
         :aria-hidden="item.depth !== 0"
       >
+        <!-- 只有最前面那张允许卡内滚动：后面几张被盖住、又不接受指针事件，
+             给它们开滚动容器等于在右侧叠出好几条滚动条（微信 X5 会常驻显示）。 -->
         <FortuneCard
           :card="item.card"
           :sign="sign"
-          :scroll="scroll"
+          :scroll="scroll && item.depth === 0"
           :wide="wide"
           :ring-size="ringSize"
         />
@@ -251,9 +372,16 @@ onBeforeUnmount(() => {
   width: 100%;
   max-width: var(--card-w);
   transform-origin: top center;
-  will-change: transform, opacity;
-  transition: transform 0.72s var(--ease-spring), opacity 0.5s var(--ease-out),
-    filter 0.5s var(--ease-out);
+  /* 只让 transform 与 opacity 参与过渡：卡上的 box-shadow 半径近百像素，
+     一旦把 filter 也放进过渡区间，整张卡每帧都要重新光栅化，必掉帧。 */
+  transition: transform 0.5s var(--ease-spring), opacity 0.36s var(--ease-out);
+}
+
+/* 只提升"正在动的那一张"为合成层：卡上的大范围阴影不提升就会每帧重绘。
+   六层全提等于几十 MB 显存，手机上得不偿失。 */
+.deck__layer.is-front,
+.deck__layer.is-dragging {
+  will-change: transform;
 }
 
 .deck__layer.is-front {
@@ -313,12 +441,20 @@ onBeforeUnmount(() => {
   flex: 1;
   gap: 5px;
   overflow-x: auto;
+  overflow-y: hidden;
+  /* 指示点条在窄屏上会横向溢出，但它不该出现滚动条：
+     scrollbar-width / -ms-overflow-style 覆盖标准与老 IE 内核，
+     ::-webkit-scrollbar 覆盖 WebKit/X5 —— 三个一起写才不会有平台漏网。 */
   scrollbar-width: none;
+  -ms-overflow-style: none;
+  overscroll-behavior-x: contain;
   padding: 4px 2px;
 }
 
 .deck__dots::-webkit-scrollbar {
   display: none;
+  width: 0;
+  height: 0;
 }
 
 .deck__dot {

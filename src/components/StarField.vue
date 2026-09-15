@@ -18,6 +18,9 @@ let dpr = 1
 let lastTs = 0
 let meteorCountdown = 6
 
+/** 背景只按 30fps 重绘 */
+const FRAME_MS = 1000 / 30
+
 let stars = []
 let constellations = []
 let meteors = []
@@ -217,6 +220,12 @@ function renderFrame(ts) {
 
 function loop(ts) {
   if (!running) return
+  rafId = window.requestAnimationFrame(loop)
+
+  // 30fps 上限。星点闪烁、星座呼吸本来都是慢动作，砍一半帧率肉眼看不出，
+  // 省下来的每帧填充量正好留给牌组的拖拽 —— 手机上的掉帧多半出在这一步。
+  if (lastTs && ts - lastTs < FRAME_MS - 1) return
+
   const dt = lastTs ? Math.min(48, ts - lastTs) : 16
   lastTs = ts
 
@@ -224,8 +233,6 @@ function loop(ts) {
   renderStars(ts)
   renderConstellations(ts)
   renderMeteors(dt)
-
-  rafId = window.requestAnimationFrame(loop)
 }
 
 function start() {

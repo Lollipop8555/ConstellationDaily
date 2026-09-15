@@ -94,7 +94,10 @@ const gridStyle = computed(() => {
      多出来的高度归牌阵。牌阵的尺寸是引擎按这个额度解出来的，只会小于它。 */
   max-height: var(--picker-h, none);
   min-height: 0;
-  /* 内容比 max-height 矮时整体居中；safe 保证真超高时也不会把顶部裁到滚不到 */
+  /* 内容比 max-height 矮时整体居中；safe 保证真超高时也不会把顶部裁到滚不到。
+     老 WebView（微信 X5）不认 safe 关键字，整条会被丢掉、退回默认的 flex-start，
+     所以先给一条普通 center 兜底。 */
+  justify-content: center;
   justify-content: safe center;
 }
 
