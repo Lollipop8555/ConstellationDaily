@@ -8,9 +8,12 @@
  *       层号每翻一张整体错开一格，扇面于是自己照镜子似的左右交替
  *     · 否则（收起模式）：在同一位置朝同一侧轻微错开地堆叠（窄屏塞不下对称扇面）
  * - 所有卡牌常驻 DOM（v-for 覆盖全部卡），切换只改各层的位置与层级，
- *   不重新挂载任何一张卡，也不做透明度淡出：后层是不透明的实体卡，层次由
- *   "被前卡压住多少"给出；看不见的深层用 display: none 挡在绘制之外，
- *   见 stacked / layerStyle
+ *   不重新挂载任何一张卡：后层是不透明的实体卡，层次由"被前卡压住多少"给出；
+ *   看不见的深层用 display: none 挡在绘制之外，见 stacked / layerStyle
+ * - 唯一带透明度的一段是"出栈"：被翻掉的那张先滑离原位、再淡出，
+ *   然后才交还给层系统（见 leaveFront / @keyframes deck-leave）。
+ *   前卡是 z 最高、缩放到 1 的实体卡，直接让它在层序末端 display: none
+ *   就是"啪"地一下没了 —— 窄屏宽屏都是这一处突兀
  * - 切换方式：点击卡牌 / 左右滑动 / 左右方向键 / 指示点
  *   手势只有"翻到下一张"这一个动作，左右滑动都是。
  *   牌堆几何决定了压在前卡底下的永远是下一张（depth 1 就是 active + 1），
@@ -70,6 +73,18 @@ const PRESETS = {
 
 const active = ref(0)
 const dragging = ref(false)
+/**
+ * 正在飞出去的那些卡：card.id -> { dir, x, r }。
+ * 翻牌不是"新卡盖上旧卡"就完事的 —— 旧卡在前卡位上是 z 最高、缩放到 1 的实体卡，
+ * 一翻就消失太突兀。这里让它先滑离原位、再淡出，走完之后才交还给层系统。
+ * dir 是飞出方向（±1），x/r 是它离手时所在的位置，见 leaveFront。
+ *
+ * 用 Map 而不是单个对象：连点两下时两张卡会同时在飞，谁飞完了删谁。
+ * 只有一个槽位的话，第二下会把第一张的状态顶掉，那张正飞到一半会当场消失。
+ */
+const leaving = ref(new Map())
+/** id -> 定时器，与 leaving 同步增删，出栈动画跑完就把对应的那张交还层系统 */
+const leaveTimers = new Map()
 const dotsEl = ref(null)
 const stageEl = ref(null)
 
@@ -102,6 +117,9 @@ let dx = 0
 let dy = 0
 let rafId = 0
 
+/** 出栈动画时长：layerStyle 写进 animation，leaveFront 用它收回状态，两边必须是同一个数 */
+const LEAVE_MS = 560
+
 const total = computed(() => props.cards.length)
 const preset = computed(() => (mode.value === 'fan' ? PRESETS.fan : PRESETS.stack))
 
@@ -120,6 +138,9 @@ const stacked = computed(() =>
       // 扇面因此自己左右交替：拿走右边那张，顶上来的是左边那张。
       // 窄屏堆叠不交替（见 PRESETS.stack），一律站右侧。
       side: mode.value === 'fan' ? (index % 2 ? 1 : -1) : 1,
+      // 刚离场、正在往外飞的那张：它已经不在层序里了（raw 落在末端、即将 display:
+      // none），这里单独把它认出来，交给 layerStyle 用一段定格动画送走。
+      fly: leaving.value.get(card.id) || null,
       // 能露出来的只有最前面 count 层，再深的卡彼此完全重合在同一处。
       // 多出的每一层都是一张近全屏、带 90px 模糊阴影的光栅图：切一次牌，
       // 合成器要重画十几层，手机上的"闪一下"就是从这里来的。
@@ -130,20 +151,39 @@ const stacked = computed(() =>
   }),
 )
 
-function layerStyle(depth, visible, side) {
+function layerStyle(item) {
+  const depth = item.depth
   const layer = preset.value[depth] || preset.value[preset.value.length - 1]
+  if (item.fly) {
+    // 出栈的那张：动画的起点钉在它离手时所在的位置上（--fly-from-x/-r），
+    // 所以横滑到一半松手，它是从手指松开的地方接着飞的，不会先闪回中心再飞出去。
+    // 这里只给变量，不给 animation，也不给 transform：
+    // 整段位移由 .is-leaving + @keyframes deck-leave 接管（写在这儿两者会打架），
+    // 动画名必须留在 CSS 里 —— scoped 会把 @keyframes 名字加 hash，
+    // 从 JS 里拼出来的名字对不上，那段动画就静悄悄地不跑。
+    return {
+      '--fly-from-x': `${item.fly.x.toFixed(2)}px`,
+      '--fly-from-r': `${item.fly.r.toFixed(2)}deg`,
+      '--fly-dir': String(item.fly.dir),
+      // 时长只有这一个来源：定时器也用它，动画本体也从这里读
+      '--leave-ms': `${LEAVE_MS}ms`,
+      // 层序里它是"将要看不见的那层"，display 要明确扳回来：行内样式压得住
+      // .is-leaving 那条规则，不在这里清掉，卡片就还是 display: none，飞不出来
+      display: '',
+    }
+  }
   // 站左侧的卡：把"右侧"的几何整条绕中心翻过去 —— 横向位移取负，倾角也取负。
   // var() 和 calc() 都能嵌在 calc 里相乘，所以这里只加一层 * -1，
   // 不必为左侧再定义一套 CSS 变量（也就不会有两份需要同步的数值）。
-  const x = side < 0 ? `calc(${layer.x} * -1)` : layer.x
+  const x = item.side < 0 ? `calc(${layer.x} * -1)` : layer.x
   return {
     // x/y 允许写成 px 或 var()：扇形展开的偏移量就挂在舞台上的 CSS 变量里
-    transform: transformOf(x, layer.y, layer.s, layer.r * side),
+    transform: transformOf(x, layer.y, layer.s, layer.r * item.side),
     // 只改位置：层级决定谁压住谁，卡本身始终是实体，不做透明度淡出
     zIndex: layer.z,
     // 看不见的深层直接不生成盒子：不进绘制列表、不占光栅图。
     // 用 display 而不是 visibility —— 后者照样会保留层和已光栅的内容。
-    display: visible ? '' : 'none',
+    display: item.visible ? '' : 'none',
     pointerEvents: depth === 0 ? 'auto' : 'none',
   }
 }
@@ -157,8 +197,12 @@ function paintDrag() {
   rafId = 0
   if (!frontEl) return
   const shift = dx * FOLLOW
-  const tilt = Math.max(-TILT_MAX, Math.min(TILT_MAX, dx * TILT))
-  frontEl.style.transform = transformOf(`${shift.toFixed(2)}px`, '0px', 1, tilt.toFixed(3))
+  frontEl.style.transform = transformOf(`${shift.toFixed(2)}px`, '0px', 1, tiltOf(dx).toFixed(3))
+}
+
+/** 跟手倾角。出栈动画的起点也用同一个算法，松手时才能从当前角度无缝接着飞 */
+function tiltOf(px) {
+  return Math.max(-TILT_MAX, Math.min(TILT_MAX, px * TILT))
 }
 
 function scheduleDrag() {
@@ -189,8 +233,41 @@ function endDrag(springBack) {
   else el.style.removeProperty('transform')
 }
 
-function next() {
+/**
+ * 让当前最前面那张出栈：登记飞出方向与起点，定格动画跑完后把状态交还给层系统。
+ * @param {number} dir 手势方向 ±1；0 表示不是手势（点按 / 方向键 / 按钮），
+ *   那就从它自己那一侧出去 —— 扇形里每张卡本来就有固定站位，顺手而已。
+ * @param {number} x 离手时的横向位移（px）
+ * @param {number} r 离手时的倾角（deg）
+ */
+function leaveFront(dir, x, r) {
+  const front = stacked.value.find((item) => item.depth === 0)
+  if (!front) return
+  const id = front.card.id
+  const old = leaveTimers.get(id)
+  if (old) window.clearTimeout(old)
+  leaving.value.set(id, { dir: dir === 0 ? front.side : dir, x, r })
+  // 动画定格在最后一帧（见 layerStyle），到点才撤状态：那时它早已回到层序末端
+  // （被前面那张整张盖住，或直接 display: none），撤掉的一瞬间看不出任何变化。
+  leaveTimers.set(
+    id,
+    window.setTimeout(() => {
+      leaveTimers.delete(id)
+      leaving.value.delete(id)
+    }, LEAVE_MS),
+  )
+}
+
+/**
+ * 前进一张。手势、点按、方向键、底部按钮都走这里，区别只在出栈动画的起点。
+ */
+function advance(dir, x, r) {
+  leaveFront(dir, x, r)
   active.value = (active.value + 1) % total.value
+}
+
+function next() {
+  advance(0, 0, 0)
 }
 
 function prev() {
@@ -259,13 +336,21 @@ function onPointerUp(event) {
   // 只看 dx 会把"滚了一下正文"当成"点了一下卡"，卡就自己翻页了。
   const wasTap = !horizontal && Math.abs(dx) < TAP_SLOP && Math.abs(dy) < TAP_SLOP
 
-  endDrag(horizontal)
-
   // 手势只有"翻到下一张"这一个动作：往哪个方向拖开，前卡底下露出来的都是
   // depth 1（也就是下一张），所以左右都认。这样"露出的卡"和"切到的卡"永远一致，
   // 不会出现松手后换成另一张的抖动。回上一张走底部 ‹ 或指示点。
-  if (horizontal && Math.abs(delta) >= SWIPE) next()
-  else if (wasTap) next()
+  if (horizontal && Math.abs(delta) >= SWIPE) {
+    // 先把行内样式撤掉（endDrag(false) 只撤不弹回），再登记出栈：
+    // 卡要"从跑到一半的地方接着飞出去"。这里若照弹回那条路把它写回中心，
+    // 就是"先闪回原位、再消失"——正是要修的那一下。
+    endDrag(false)
+    // 飞出方向认手指方向：往哪边推就从哪边飞走。
+    advance(delta > 0 ? 1 : -1, delta * FOLLOW, tiltOf(delta))
+    return
+  }
+
+  endDrag(horizontal)
+  if (wasTap) next()
 }
 
 /**
@@ -304,6 +389,8 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  leaveTimers.forEach((timer) => window.clearTimeout(timer))
+  leaveTimers.clear()
   window.removeEventListener('keydown', onKeydown)
   if (stageEl.value) stageEl.value.removeEventListener('touchmove', onTouchMove)
 })
@@ -326,8 +413,12 @@ onBeforeUnmount(() => {
         v-for="item in stacked"
         :key="item.card.id"
         class="deck__layer"
-        :class="{ 'is-front': item.depth === 0, 'is-dragging': dragging && item.depth === 0 }"
-        :style="layerStyle(item.depth, item.visible, item.side)"
+        :class="{
+          'is-front': item.depth === 0,
+          'is-dragging': dragging && item.depth === 0,
+          'is-leaving': !!item.fly,
+        }"
+        :style="layerStyle(item)"
         :aria-hidden="item.depth !== 0"
       >
         <!-- 只有最前面那张允许卡内滚动：后面几张被盖住、又不接受指针事件，
@@ -418,9 +509,11 @@ onBeforeUnmount(() => {
   width: 100%;
   max-width: var(--card-w);
   transform-origin: top center;
-  /* 只让 transform 参与过渡：一次切换就是"把卡挪到新位置"，不动透明度、不动颜色，
-     观感上是一摞牌在推挤，而不是有几张卡淡入淡出。卡上的 box-shadow 半径近百像素，
-     一旦把 filter 之类放进过渡区间，整张卡每帧都要重新光栅化，必掉帧。
+  /* 层与层之间只让 transform 参与过渡：一次切换就是"把卡挪到新位置"，不动透明度、
+     不动颜色，观感上是一摞牌在推挤，而不是有几张卡淡入淡出。卡上的 box-shadow
+     半径近百像素，一旦把 filter 之类放进过渡区间，整张卡每帧都要重新光栅化，必掉帧。
+     出栈那张走的是另一条路：它不吃这条 transition，是 deck-leave 那段定格动画
+     自己的事（透明度也只在那一段里动）。
      缓动必须是 --ease-out 这种没有过冲的曲线：翻一张是六层同时换位，用带回弹的
      曲线（--ease-spring 过冲 42%）就是所有卡一起往外弹过头再收回，扇面会明显
      "鼓"一次 —— 那一下才是"整个扇面被重新摊开"的来源，跟槽位左右交替无关。 */
@@ -432,6 +525,45 @@ onBeforeUnmount(() => {
      常驻提升的显存开销由 stacked 限制住了：真正参与绘制的层数已被压到
      preset 长度 +1（堆叠 6 层 / 扇形 7 层），比原来那十几层还少。 */
   will-change: transform;
+}
+
+/* 出栈：刚被翻掉的那张卡自己走完最后一段路。
+   前卡是 z 最高、缩放到 1 的实体卡，若直接把它交给层序末端，它就是"啪"地没了。
+   这里让它先滑离原位（前三成半的时间全在位移），停稳之后再淡出 ——
+   先离开、再消失，而不是边飞边化，那样会读成"淡出"而不是"划走"。
+   起点 --fly-from-x/-r 由 layerStyle 写进来（就是它离手时所在的位置），
+   所以横滑到一半松手，卡是从手指松开的地方接着飞的，不会先闪回中心。
+   方向由 --fly-dir（±1）决定：往哪边推就从哪边飞走。
+   位移用 calc(var(--card-w) * …) 派生成卡宽的比例，大屏窄屏的"飞出手感"一致；
+   飞出距离略大于扇形最外层（0.478 卡宽），视觉上足以离开整摞牌，
+   又还在舞台按 span 1.87 预留的横向余量里，不会撑出滚动条
+   （何况 body 本身还兜着 overflow-x: hidden）。 */
+@keyframes deck-leave {
+  0% {
+    transform: translate3d(var(--fly-from-x, 0px), 0px, 0) rotate(var(--fly-from-r, 0deg)) scale(1);
+    opacity: 1;
+  }
+  55% {
+    transform: translate3d(calc(var(--card-w) * 0.62 * var(--fly-dir, 1)), 0px, 0)
+      rotate(calc(9deg * var(--fly-dir, 1))) scale(0.965);
+    opacity: 1;
+  }
+  100% {
+    transform: translate3d(calc(var(--card-w) * 0.86 * var(--fly-dir, 1)), 0px, 0)
+      rotate(calc(13deg * var(--fly-dir, 1))) scale(0.93);
+    opacity: 0;
+  }
+}
+
+/* 出栈那张的整段动画。名字写在这里而不是 layerStyle 里：
+   scoped 会把 @keyframes 的名字加上组件 hash，只有同一个 scoped 块里的
+   animation 声明才会被一起改写成同一个名字；从 JS 里拼字符串是对不上的。 */
+.deck__layer.is-leaving {
+  animation: deck-leave var(--leave-ms, 560ms) var(--ease-out) forwards;
+  /* 抬到所有卡之上：它正处于"被抽走"的位置，本来就该压着整摞牌 */
+  z-index: 60;
+  /* 它底下已经换成新前卡了，飞出去的过程中不该再抢指针 */
+  pointer-events: none;
 }
 
 .deck__layer.is-front {
