@@ -6,6 +6,11 @@
  *     · 横向有富余（展开模式）：向左右两侧扇形展开
  *     · 否则（收起模式）：在同一位置左右轻微错开地堆叠
  * - 切换方式：点击卡牌 / 左右滑动 / 左右方向键 / 指示点
+ *   手势只有"翻到下一张"这一个动作，左右滑动都是。
+ *   牌堆几何决定了压在前卡底下的永远是下一张（depth 1 就是 active + 1），
+ *   所以往哪个方向拖，露出来的都是它 —— 那就两个方向都翻它，
+ *   露出的卡和松手后切到的卡才永远一致。
+ *   回上一张只由底部 ‹ 和指示点负责（方向键 ← 同理），不占用手势。
  */
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import FortuneCard from './FortuneCard.vue'
@@ -27,7 +32,7 @@ const ringSize = computed(() => (layout && layout.value ? layout.value.deck.ring
 
 /** 两种排列方式下的逐层位移（depth 从 0 起，0 为最前面的当前卡） */
 const PRESETS = {
-  // 窄屏堆叠：左右（正负交替）错开，与左右滑动的切换方向一致；
+  // 窄屏堆叠：左右（正负交替）错开成一摞，错开方向纯属观感（手势两个方向都是翻下一张）；
   // 不缩放，位移即露出的宽度，x 控制在 13px 内——加上 transform-origin: center
   // 旋转带来的约 3px 外扩，仍留在视口两侧的留白里，不会出现横向滚动。
   stack: [
@@ -219,8 +224,10 @@ function onPointerUp(event) {
 
   endDrag(horizontal)
 
-  if (horizontal && delta <= -SWIPE) next()
-  else if (horizontal && delta >= SWIPE) prev()
+  // 手势只有"翻到下一张"这一个动作：往哪个方向拖开，前卡底下露出来的都是
+  // depth 1（也就是下一张），所以左右都认。这样"露出的卡"和"切到的卡"永远一致，
+  // 不会出现松手后换成另一张的抖动。回上一张走底部 ‹ 或指示点。
+  if (horizontal && Math.abs(delta) >= SWIPE) next()
   else if (wasTap) next()
 }
 
@@ -319,7 +326,9 @@ onBeforeUnmount(() => {
       <button class="deck__nav" type="button" aria-label="下一张" @click="next">›</button>
     </div>
 
-    <p v-if="showHint" class="deck__hint">第 {{ active + 1 }} / {{ total }} 张 · 点击卡牌或左右滑动切换</p>
+    <p v-if="showHint" class="deck__hint">
+      第 {{ active + 1 }} / {{ total }} 张 · 点击卡牌或左右滑动翻到下一张
+    </p>
   </div>
 </template>
 
