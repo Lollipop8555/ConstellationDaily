@@ -1,5 +1,7 @@
 # 每日星座 · Constellation Daily
 
+**在线体验**：<https://lollipop8555.github.io/ConstellationDaily/>
+
 这是一个静态的星座运势网站，可以为用户提供每日的运势计算。
 
 ## 功能
