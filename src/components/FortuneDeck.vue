@@ -5,6 +5,10 @@
  * - 排列方式随可用空间切换：
  *     · 横向有富余（展开模式）：向左右两侧扇形展开
  *     · 否则（收起模式）：在同一位置左右轻微错开地堆叠
+ * - 所有卡牌常驻 DOM（v-for 覆盖全部卡），切换只改各层的位置与层级，
+ *   不重新挂载任何一张卡，也不做透明度淡出：后层是不透明的实体卡，层次由
+ *   "被前卡压住多少"给出；看不见的深层用 display: none 挡在绘制之外，
+ *   见 stacked / layerStyle
  * - 切换方式：点击卡牌 / 左右滑动 / 左右方向键 / 指示点
  *   手势只有"翻到下一张"这一个动作，左右滑动都是。
  *   牌堆几何决定了压在前卡底下的永远是下一张（depth 1 就是 active + 1），
@@ -32,27 +36,31 @@ const ringSize = computed(() => (layout && layout.value ? layout.value.deck.ring
 
 /** 两种排列方式下的逐层位移（depth 从 0 起，0 为最前面的当前卡） */
 const PRESETS = {
-  // 窄屏堆叠：左右（正负交替）错开成一摞，错开方向纯属观感（手势两个方向都是翻下一张）；
+  // 窄屏堆叠：只做横向错开，且逐层朝同一侧递进 —— 一摞牌里，压在上面那张
+  // 总是把它下面那张推向同一侧，正负交替会读成"散落"而不是"一叠"。
   // 不缩放，位移即露出的宽度，x 控制在 13px 内——加上 transform-origin: center
   // 旋转带来的约 3px 外扩，仍留在视口两侧的留白里，不会出现横向滚动。
+  // 层层都不设 opacity：后层是不透明的实体卡，层次由"被前卡压住多少"给出。
+  // 半透明会让下层的内容透上来，一层叠一层就是穿帮。
   stack: [
-    { x: '0px', y: '0px', r: 0, s: 1, o: 1, z: 50 },
-    { x: '6px', y: '0px', r: 0.5, s: 1, o: 0.85, z: 40 },
-    { x: '-8px', y: '0px', r: -0.5, s: 1, o: 0.62, z: 30 },
-    { x: '11px', y: '0px', r: 0.5, s: 1, o: 0.4, z: 20 },
-    { x: '-13px', y: '0px', r: -0.5, s: 1, o: 0.22, z: 10 },
+    { x: '0px', y: '0px', r: 0, s: 1, z: 50 },
+    { x: '4px', y: '0px', r: 0.2, s: 1, z: 40 },
+    { x: '7px', y: '0px', r: 0.3, s: 1, z: 30 },
+    { x: '10px', y: '0px', r: 0.4, s: 1, z: 20 },
+    { x: '13px', y: '0px', r: 0.5, s: 1, z: 10 },
   ],
   // 宽屏扇形：位移全部按卡宽派生成 CSS 变量（见 .deck__stage--fan），
   // 这样大屏把卡放宽后，扇面同步撑开，不会溢出容器或与卡牌打架。
   fan: [
-    { x: '0px', y: '0px', r: 0, s: 1, o: 1, z: 50 },
-    { x: 'var(--fan-x1)', y: 'var(--fan-y1)', r: 4.2, s: 0.955, o: 0.68, z: 40 },
-    { x: 'calc(var(--fan-x1) * -1)', y: 'var(--fan-y1)', r: -4.2, s: 0.955, o: 0.68, z: 39 },
-    { x: 'var(--fan-x2)', y: 'var(--fan-y2)', r: 8, s: 0.91, o: 0.38, z: 30 },
-    { x: 'calc(var(--fan-x2) * -1)', y: 'var(--fan-y2)', r: -8, s: 0.91, o: 0.38, z: 29 },
-    // 末层只是"没有更多卡了"的占位：与前一层同几何且完全透明。
+    { x: '0px', y: '0px', r: 0, s: 1, z: 50 },
+    { x: 'var(--fan-x1)', y: 'var(--fan-y1)', r: 4.2, s: 0.955, z: 40 },
+    { x: 'calc(var(--fan-x1) * -1)', y: 'var(--fan-y1)', r: -4.2, s: 0.955, z: 39 },
+    { x: 'var(--fan-x2)', y: 'var(--fan-y2)', r: 8, s: 0.91, z: 30 },
+    { x: 'calc(var(--fan-x2) * -1)', y: 'var(--fan-y2)', r: -8, s: 0.91, z: 29 },
+    // 末层与前一层同几何、层级更低，整张卡都被前一层完整盖住：它是"没有更多
+    // 卡了"的那个位置，只为让刚滑出可见区的卡有地方待着，不必在过渡途中卸载。
     // 若继续按更远的位移铺开，宽卡时会把扇面撑出容器，产生横向滚动。
-    { x: 'var(--fan-x2)', y: 'var(--fan-y2)', r: 8, s: 0.91, o: 0, z: 20 },
+    { x: 'var(--fan-x2)', y: 'var(--fan-y2)', r: 8, s: 0.91, z: 20 },
   ],
 }
 
@@ -96,17 +104,31 @@ const preset = computed(() => (mode.value === 'fan' ? PRESETS.fan : PRESETS.stac
 const stacked = computed(() =>
   props.cards.map((card, index) => {
     const raw = (index - active.value + total.value) % total.value
-    return { card, index, depth: Math.min(raw, preset.value.length - 1) }
+    const count = preset.value.length
+    return {
+      card,
+      index,
+      depth: Math.min(raw, count - 1),
+      // 能露出来的只有最前面 count 层，再深的卡彼此完全重合在同一处。
+      // 多出的每一层都是一张近全屏、带 90px 模糊阴影的光栅图：切一次牌，
+      // 合成器要重画十几层，手机上的"闪一下"就是从这里来的。
+      // 多放行一层（raw === count）是因为它下一刻就要滑进可见区 ——
+      // 提前留着，它才不必在过渡中途重新挂载。
+      visible: raw <= count,
+    }
   }),
 )
 
-function layerStyle(depth) {
+function layerStyle(depth, visible) {
   const layer = preset.value[depth] || preset.value[preset.value.length - 1]
   return {
     // x/y 允许写成 px 或 var()：扇形展开的偏移量就挂在舞台上的 CSS 变量里
     transform: transformOf(layer.x, layer.y, layer.s, layer.r),
-    opacity: layer.o,
+    // 只改位置：层级决定谁压住谁，卡本身始终是实体，不做透明度淡出
     zIndex: layer.z,
+    // 看不见的深层直接不生成盒子：不进绘制列表、不占光栅图。
+    // 用 display 而不是 visibility —— 后者照样会保留层和已光栅的内容。
+    display: visible ? '' : 'none',
     pointerEvents: depth === 0 ? 'auto' : 'none',
   }
 }
@@ -290,7 +312,7 @@ onBeforeUnmount(() => {
         :key="item.card.id"
         class="deck__layer"
         :class="{ 'is-front': item.depth === 0, 'is-dragging': dragging && item.depth === 0 }"
-        :style="layerStyle(item.depth)"
+        :style="layerStyle(item.depth, item.visible)"
         :aria-hidden="item.depth !== 0"
       >
         <!-- 只有最前面那张允许卡内滚动：后面几张被盖住、又不接受指针事件，
@@ -381,15 +403,16 @@ onBeforeUnmount(() => {
   width: 100%;
   max-width: var(--card-w);
   transform-origin: top center;
-  /* 只让 transform 与 opacity 参与过渡：卡上的 box-shadow 半径近百像素，
-     一旦把 filter 也放进过渡区间，整张卡每帧都要重新光栅化，必掉帧。 */
-  transition: transform 0.5s var(--ease-spring), opacity 0.36s var(--ease-out);
-}
-
-/* 只提升"正在动的那一张"为合成层：卡上的大范围阴影不提升就会每帧重绘。
-   六层全提等于几十 MB 显存，手机上得不偿失。 */
-.deck__layer.is-front,
-.deck__layer.is-dragging {
+  /* 只让 transform 参与过渡：一次切换就是"把卡挪到新位置"，不动透明度、不动颜色，
+     观感上是一摞牌在推挤，而不是有几张卡淡入淡出。卡上的 box-shadow 半径近百像素，
+     一旦把 filter 之类放进过渡区间，整张卡每帧都要重新光栅化，必掉帧。 */
+  transition: transform 0.5s var(--ease-spring);
+  /* 每个可见层都常驻合成层，且"常驻"是关键：
+     切牌时前卡会失去 .is-front，如果提升与否跟着这个类切换，内核就正好在
+     那一张的过渡跑到一半时把它的层拆掉重建 —— 重建的那一帧它按没有
+     transform 的样子绘制，于是"底下那张闪一下压到前面"。
+     常驻提升的显存开销由 stacked 限制住了：真正参与绘制的层数已被压到
+     preset 长度 +1（堆叠 6 层 / 扇形 7 层），比原来那十几层还少。 */
   will-change: transform;
 }
 
