@@ -3,7 +3,9 @@
  * 塔罗式牌组
  * - 卡牌尺寸完全一致，全部由布局引擎按视口算出（宽、高、舞台宽来自 CSS 变量）
  * - 排列方式随可用空间切换：
- *     · 横向有富余（展开模式）：以当前卡为中心，向左右两侧对称扇形展开
+ *     · 横向有富余（展开模式）：以当前卡为中心左右交替铺成扇形。每张卡的左右站位
+ *       跟着卡自己走 —— 翻一张，它只是往中间靠一格，绝不会被换到对面去；
+ *       层号每翻一张整体错开一格，扇面于是自己照镜子似的左右交替
  *     · 否则（收起模式）：在同一位置朝同一侧轻微错开地堆叠（窄屏塞不下对称扇面）
  * - 所有卡牌常驻 DOM（v-for 覆盖全部卡），切换只改各层的位置与层级，
  *   不重新挂载任何一张卡，也不做透明度淡出：后层是不透明的实体卡，层次由
@@ -51,19 +53,17 @@ const PRESETS = {
   ],
   // 宽屏扇形：位移全部按卡宽派生成 CSS 变量（见 .deck__stage--fan），
   // 这样大屏把卡放宽后，扇面同步撑开，不会溢出容器或与卡牌打架。
-  // 槽位以当前卡为中心左右交替（+x1 / -x1 / +x2 / -x2），扇面才是对称的；
-  // 代价是"前进一格"里两侧的卡要换边，但它们层级更低，换边是从前卡底下穿过，
-  // 被挡住大半，看去是一摞牌在重新分牌，而不是卡从视野里飞出去。
-  // 真正会把这个动作撑成"扇面重新展开"的是缓动过冲，见 .deck__layer 的说明。
+  // 这张表只写"站在右侧"时的几何，站左侧的卡由 layerStyle 把 x 和倾角一起取负，
+  // 所以相邻两层是对称的 ±x1 / ±x2，扇面自己是左右对称的 ——
+  // 而谁站左谁站右由卡片自己的奇偶决定（见 stacked 里的 side），不随层号跑。
+  // 于是层号每变一格，两个几何相同的层正好落在同一侧：末层永远被它上面那层
+  // 整张盖住，只负责给刚滑出可见区的卡一个落脚处，不必在过渡途中卸载。
   fan: [
     { x: '0px', y: '0px', r: 0, s: 1, z: 50 },
     { x: 'var(--fan-x1)', y: 'var(--fan-y1)', r: 4.2, s: 0.955, z: 40 },
-    { x: 'calc(var(--fan-x1) * -1)', y: 'var(--fan-y1)', r: -4.2, s: 0.955, z: 39 },
+    { x: 'var(--fan-x1)', y: 'var(--fan-y1)', r: 4.2, s: 0.955, z: 39 },
     { x: 'var(--fan-x2)', y: 'var(--fan-y2)', r: 8, s: 0.91, z: 30 },
-    { x: 'calc(var(--fan-x2) * -1)', y: 'var(--fan-y2)', r: -8, s: 0.91, z: 29 },
-    // 末层与前一层同几何、层级更低，整张卡都被前一层完整盖住：它是"没有更多
-    // 卡了"的那个位置，只为让刚滑出可见区的卡有地方待着，不必在过渡途中卸载。
-    // 若继续按更远的位移铺开，宽卡时会把扇面撑出容器，产生横向滚动。
+    { x: 'var(--fan-x2)', y: 'var(--fan-y2)', r: 8, s: 0.91, z: 29 },
     { x: 'var(--fan-x2)', y: 'var(--fan-y2)', r: 8, s: 0.91, z: 20 },
   ],
 }
@@ -113,6 +113,13 @@ const stacked = computed(() =>
       card,
       index,
       depth: Math.min(raw, count - 1),
+      // 左右站位是卡自己的属性，不是层号的属性：奇偶定下来就一辈子不变。
+      // 这样翻一张牌时，只有"往中间靠一格"这一种位移，任何一张卡都不会
+      // 从左边被甩到右边（那才是反直觉的那一下）。
+      // 层号由 raw 给出、每翻一张整体减一，两侧的层号恰好互换 ——
+      // 扇面因此自己左右交替：拿走右边那张，顶上来的是左边那张。
+      // 窄屏堆叠不交替（见 PRESETS.stack），一律站右侧。
+      side: mode.value === 'fan' ? (index % 2 ? 1 : -1) : 1,
       // 能露出来的只有最前面 count 层，再深的卡彼此完全重合在同一处。
       // 多出的每一层都是一张近全屏、带 90px 模糊阴影的光栅图：切一次牌，
       // 合成器要重画十几层，手机上的"闪一下"就是从这里来的。
@@ -123,11 +130,15 @@ const stacked = computed(() =>
   }),
 )
 
-function layerStyle(depth, visible) {
+function layerStyle(depth, visible, side) {
   const layer = preset.value[depth] || preset.value[preset.value.length - 1]
+  // 站左侧的卡：把"右侧"的几何整条绕中心翻过去 —— 横向位移取负，倾角也取负。
+  // var() 和 calc() 都能嵌在 calc 里相乘，所以这里只加一层 * -1，
+  // 不必为左侧再定义一套 CSS 变量（也就不会有两份需要同步的数值）。
+  const x = side < 0 ? `calc(${layer.x} * -1)` : layer.x
   return {
     // x/y 允许写成 px 或 var()：扇形展开的偏移量就挂在舞台上的 CSS 变量里
-    transform: transformOf(layer.x, layer.y, layer.s, layer.r),
+    transform: transformOf(x, layer.y, layer.s, layer.r * side),
     // 只改位置：层级决定谁压住谁，卡本身始终是实体，不做透明度淡出
     zIndex: layer.z,
     // 看不见的深层直接不生成盒子：不进绘制列表、不占光栅图。
@@ -316,7 +327,7 @@ onBeforeUnmount(() => {
         :key="item.card.id"
         class="deck__layer"
         :class="{ 'is-front': item.depth === 0, 'is-dragging': dragging && item.depth === 0 }"
-        :style="layerStyle(item.depth, item.visible)"
+        :style="layerStyle(item.depth, item.visible, item.side)"
         :aria-hidden="item.depth !== 0"
       >
         <!-- 只有最前面那张允许卡内滚动：后面几张被盖住、又不接受指针事件，
